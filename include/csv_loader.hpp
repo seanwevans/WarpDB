@@ -1,12 +1,11 @@
 #pragma once
-#include <vector>
 #include <string>
+#include <vector>
 
 struct Table {
-    float* d_price;     // Device pointers
-    int* d_quantity;
-    int num_rows;
+  float *d_price; // Device pointers
+  int *d_quantity;
+  int num_rows;
 };
 
-Table load_csv_to_gpu(const std::string& filepath);
-
+Table load_csv_to_gpu(const std::string &filepath);
