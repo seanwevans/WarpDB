@@ -24,17 +24,16 @@ std::vector<Token> tokenize(const std::string &input) {
         num += input[i++];
       }
       tokens.push_back({TokenType::Number, num});
-    } else if (std::string("+-*/()<>=!").find(input[i]) != std::string::npos) {
-      tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
-    } else if (input[i] == '>' || input[i] == '<' || input[i] == '=' ||
-               input[i] == '!') {
-      std::string op(1, input[i]);
-      if (i + 1 < input.size() && input[i + 1] == '=') {
-        op += '=';
-        i++;
-      }
-      i++;
+    } else if ((input[i] == '>' || input[i] == '<' || input[i] == '=' ||
+                input[i] == '!') &&
+               i + 1 < input.size() && input[i + 1] == '=') {
+      std::string op;
+      op += input[i];
+      op += '=';
+      i += 2;
       tokens.push_back({TokenType::Operator, op});
+    } else if (std::string("+-*/()><=!" ).find(input[i]) != std::string::npos) {
+      tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
     } else {
       throw std::runtime_error("Unknown character: " +
                                std::string(1, input[i]));
@@ -63,6 +62,7 @@ bool match(const std::string &op) {
 // Forward declarations
 ASTNodePtr parse_term();
 ASTNodePtr parse_factor();
+ASTNodePtr parse_comparison();
 
 // Parses: expr = term ( ("+"|"-") term )*
 ASTNodePtr parse_expression_internal() {
@@ -72,6 +72,22 @@ ASTNodePtr parse_expression_internal() {
     ASTNodePtr right = parse_term();
     node =
         std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
+  }
+  return node;
+}
+
+// Parses comparison expressions with lower precedence than arithmetic
+// comparison = expr_internal ( (">"|"<"|">="|"<="|"=="|"!=") expr_internal )*
+ASTNodePtr parse_comparison() {
+  ASTNodePtr node = parse_expression_internal();
+  while (true) {
+    if (match(">=") || match("<=") || match("==") || match("!=") || match(">") || match("<")) {
+      std::string op = toks[current - 1].value;
+      ASTNodePtr right = parse_expression_internal();
+      node = std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
+    } else {
+      break;
+    }
   }
   return node;
 }
@@ -98,7 +114,7 @@ ASTNodePtr parse_factor() {
     advance();
     return std::make_unique<VariableNode>(tok.value);
   } else if (match("(")) {
-    ASTNodePtr node = parse_expression_internal();
+    ASTNodePtr node = parse_comparison();
     if (!match(")"))
       throw std::runtime_error("Expected ')'");
     return node;
@@ -111,5 +127,9 @@ ASTNodePtr parse_factor() {
 ASTNodePtr parse_expression(const std::vector<Token> &tokens) {
   current = 0;
   toks = tokens;
-  return parse_expression_internal();
+  ASTNodePtr node = parse_comparison();
+  if (peek().type != TokenType::End) {
+    throw std::runtime_error("Unexpected token: " + peek().value);
+  }
+  return node;
 }
