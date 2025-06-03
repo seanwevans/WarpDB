@@ -24,10 +24,9 @@ std::vector<Token> tokenize(const std::string &input) {
         num += input[i++];
       }
       tokens.push_back({TokenType::Number, num});
-    } else if (std::string("+-*/()<>=!").find(input[i]) != std::string::npos) {
-      tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
     } else if (input[i] == '>' || input[i] == '<' || input[i] == '=' ||
                input[i] == '!') {
+      // Handle two-character comparison operators (>=, <=, ==, !=) first
       std::string op(1, input[i]);
       if (i + 1 < input.size() && input[i + 1] == '=') {
         op += '=';
@@ -35,6 +34,9 @@ std::vector<Token> tokenize(const std::string &input) {
       }
       i++;
       tokens.push_back({TokenType::Operator, op});
+    } else if (std::string("+-*/()<>").find(input[i]) != std::string::npos) {
+      // Remaining single-character operators
+      tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
     } else {
       throw std::runtime_error("Unknown character: " +
                                std::string(1, input[i]));

@@ -104,6 +104,8 @@ WarpDB implements a simple recursive descent parser to transform SQL-like expres
 - Numeric literals
 - Binary operations (`+`, `-`, `*`, `/`)
 - Comparison operations (`>`, `<`, `>=`, `<=`, `==`, `!=`)
+  - The tokenizer checks two-character operators (e.g., `>=`, `<=`) before
+    handling single-character ones.
 - Parenthesized expressions
 
 ### JIT Compilation
