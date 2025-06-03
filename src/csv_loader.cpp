@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <sstream>
 
 #define CUDA_CHECK(err)                                                        \
@@ -14,6 +15,10 @@
 
 Table load_csv_to_gpu(const std::string &filepath) {
   std::ifstream file(filepath);
+  if (!file.is_open()) {
+    std::cerr << "Failed to open file: " << filepath << std::endl;
+    throw std::runtime_error("Unable to open file");
+  }
   std::string line;
   std::vector<float> h_price;
   std::vector<int> h_quantity;
