@@ -113,5 +113,9 @@ ASTNodePtr parse_factor() {
 ASTNodePtr parse_expression(const std::vector<Token> &tokens) {
   current = 0;
   toks = tokens;
-  return parse_expression_internal();
+  ASTNodePtr ast = parse_expression_internal();
+  if (peek().type != TokenType::End) {
+    throw std::runtime_error("Unexpected token: " + peek().value);
+  }
+  return ast;
 }
