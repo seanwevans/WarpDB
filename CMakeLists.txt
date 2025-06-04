@@ -19,3 +19,10 @@ set_target_properties(warpdb PROPERTIES
 
 target_link_libraries(warpdb PRIVATE /usr/lib/x86_64-linux-gnu/libnvrtc.so cuda)
 
+add_executable(expression_test
+    tests/test_expression.cpp
+    src/expression.cpp
+)
+
+add_test(NAME expression_test COMMAND expression_test)
+
