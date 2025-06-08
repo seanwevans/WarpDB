@@ -25,6 +25,7 @@ set(WARPDB_SRC
     src/expression.cpp
     src/jit.cpp
     src/arrow_utils.cpp
+    src/multi_gpu_utils.cpp
     src/optimizer.cpp
 )
 
@@ -107,6 +108,7 @@ add_library(warpdb_lib STATIC
     src/expression.cpp
     src/jit.cpp
     src/arrow_utils.cpp
+    src/multi_gpu_utils.cpp
 )
 
 set_target_properties(warpdb_lib PROPERTIES
