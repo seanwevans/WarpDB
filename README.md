@@ -10,8 +10,11 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
 - **Parquet/Arrow/ORC Loading**: Use Apache Arrow to ingest columnar formats
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
+- **Arrow Columnar Format**: Optionally load data using Apache Arrow for zero-copy
+  interoperability with Pandas, PyTorch, and Spark
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
 - **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
+
 
 ## Architecture
 
@@ -21,9 +24,17 @@ WarpDB consists of the following main components:
 - Loads CSV data directly into GPU memory with minimal CPU intervention
 - Handles data type conversion and memory allocation
 
+
+### Arrow Integration
+- When Apache Arrow is available, WarpDB loads data into Arrow tables and
+  transfers columns to GPU memory using Arrow's CUDA support. Arrow buffers can
+  be shared across processes and enable efficient zero-copy interchange with
+  other systems.
+
 ### Arrow Loader
 - Reads Parquet, Arrow, and ORC files using Apache Arrow
 - Transfers columns to GPU memory
+
 
 ### SQL Parser
 - Tokenizes and parses SQL-like expressions into an Abstract Syntax Tree (AST)
@@ -43,6 +54,7 @@ WarpDB consists of the following main components:
 - CMake 3.18 or higher
 - C++17 compatible compiler
 - NVIDIA GPU with compute capability 7.0 or higher
+- [Optional] Apache Arrow with CUDA support for zero-copy columnar data
 
 The build system uses `find_package(CUDAToolkit)` to automatically locate
 NVRTC and the CUDA driver. Ensure the CUDA toolkit is installed and available
@@ -54,6 +66,7 @@ in your environment.
 mkdir build
 cd build
 cmake ..  # CMake will locate the CUDA toolkit automatically
+# Arrow is discovered via `find_package(Arrow)` when available
 make
 ```
 

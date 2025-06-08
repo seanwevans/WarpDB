@@ -1,10 +1,24 @@
 #include "csv_loader.hpp"
+#ifdef USE_ARROW
+#include "arrow_loader.hpp"
+#endif
 #include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <sstream>
+
+#ifdef USE_ARROW
+#include <arrow/api.h>
+#include <arrow/csv/api.h>
+#include <arrow/io/api.h>
+#include <arrow/result.h>
+#include <arrow/util/logging.h>
+#include <arrow/cuda/api.h>
+#endif
+
 #include <algorithm>
+
 
 #define CUDA_CHECK(err)                                                        \
   do {                                                                         \
@@ -15,10 +29,20 @@
   } while (0)
 
 
+Table load_csv_to_gpu(const std::string &filepath) {
+#ifdef USE_ARROW
+  ArrowTable atable = load_csv_arrow(filepath);
+  Table table{atable.d_price, atable.d_quantity,
+              static_cast<int>(atable.num_rows)};
+  return table;
+#else
+
+
 Table load_csv_to_gpu(const std::string &filepath,
                       const std::vector<DataType> &schema) {
 
 HostTable load_csv_to_host(const std::string &filepath) {
+
 
   std::ifstream file(filepath);
   if (!file.is_open()) {
@@ -173,6 +197,7 @@ Table upload_to_gpu(const HostTable &host) {
             << " nulls=" << stats.quantity.null_count << "\n";
 
   return table;
+#endif
 }
 
 Table load_csv_to_gpu(const std::string &filepath) {
