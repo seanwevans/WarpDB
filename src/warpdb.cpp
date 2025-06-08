@@ -6,11 +6,7 @@
 
 #include <map>
 #include <utility>
-
-WarpDB::WarpDB(const std::string &csv_path) {
-    host_table_ = load_csv_to_host(csv_path);
-    table_ = upload_to_gpu(host_table_);
-
+#include "arrow_loader.hpp"
 #include <stdexcept>
 #include <unordered_set>
 #include <memory>
@@ -240,6 +236,7 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     }
 
     return result;
+}
 
 void WarpDB::query_arrow(const std::string &expr, ArrowArray *out_array,
                          ArrowSchema *out_schema, bool use_shared_memory) {
