@@ -3,6 +3,22 @@
 #include <unordered_set>
 #include <stdexcept>
 
+static const char *token_type_name(TokenType t) {
+  switch (t) {
+  case TokenType::Identifier:
+    return "Identifier";
+  case TokenType::Number:
+    return "Number";
+  case TokenType::Operator:
+    return "Operator";
+  case TokenType::Keyword:
+    return "Keyword";
+  case TokenType::End:
+    return "End";
+  }
+  return "Unknown";
+}
+
 std::vector<Token> tokenize(const std::string &input) {
   std::vector<Token> tokens;
   size_t i = 0;
@@ -58,8 +74,9 @@ std::vector<Token> tokenize(const std::string &input) {
       // Remaining single-character operators
       tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
     } else {
-      throw std::runtime_error("Unknown character: " +
-                               std::string(1, input[i]));
+      throw std::runtime_error("Unknown character '" +
+                               std::string(1, input[i]) +
+                               "' at position " + std::to_string(i));
     }
   }
 
@@ -176,7 +193,9 @@ ASTNodePtr parse_factor() {
       throw std::runtime_error("Expected ')'");
     return node;
   } else {
-    throw std::runtime_error("Unexpected token: " + tok.value);
+    throw std::runtime_error(std::string("Unexpected token (") +
+                             token_type_name(tok.type) + ": " + tok.value +
+                             ")");
   }
 }
 } // end anonymous namespace
@@ -214,9 +233,12 @@ ASTNodePtr parse_logical_or(const std::vector<Token> &tokens) {
 }
 
 QueryAST parse_query(const std::vector<Token> &tokens) {
+  size_t end = tokens.size();
+  if (end > 0 && tokens[end - 1].type == TokenType::End)
+    --end;
   size_t pos = 0;
   auto expect_kw = [&](const std::string &kw) {
-    if (pos >= tokens.size() || tokens[pos].type != TokenType::Keyword ||
+    if (pos >= end || tokens[pos].type != TokenType::Keyword ||
         tokens[pos].value != kw)
       throw std::runtime_error("Expected keyword: " + kw);
     pos++;
@@ -263,6 +285,8 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
                                                        parse_expression(inner));
           }
           return std::make_unique<AggregationNode>(at, parse_expression(inner));
+        } else {
+          throw std::runtime_error("Invalid syntax for " + kw + " aggregation");
         }
       }
     }
@@ -271,12 +295,12 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     return parse_expression(tmp);
   };
 
-  while (pos < tokens.size()) {
+  while (pos < end) {
     if (tokens[pos].type == TokenType::Keyword && tokens[pos].value == "FROM")
       break;
     std::vector<Token> item;
     int depth = 0;
-    while (pos < tokens.size()) {
+    while (pos < end) {
       if (tokens[pos].type == TokenType::Operator && tokens[pos].value == "(")
         depth++;
       if (tokens[pos].type == TokenType::Operator && tokens[pos].value == ")")
@@ -290,26 +314,28 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
       item.push_back(tokens[pos++]);
     }
     query.select_list.push_back(parse_select_item(item));
-    if (pos < tokens.size() && tokens[pos].type == TokenType::Operator &&
+    if (pos < end && tokens[pos].type == TokenType::Operator &&
         tokens[pos].value == ",")
       pos++; // skip comma
   }
 
   expect_kw("FROM");
-  if (pos >= tokens.size() || tokens[pos].type != TokenType::Identifier)
+  if (pos >= end || tokens[pos].type != TokenType::Identifier)
     throw std::runtime_error("Expected table name after FROM");
   query.from_table = tokens[pos++].value;
 
+
   while (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
          tokens[pos].value == "JOIN") {
+
     pos++;
-    if (pos >= tokens.size() || tokens[pos].type != TokenType::Identifier)
+    if (pos >= end || tokens[pos].type != TokenType::Identifier)
       throw std::runtime_error("Expected table name after JOIN");
     JoinClause jc;
     jc.table = tokens[pos++].value;
     expect_kw("ON");
     size_t start = pos;
-    while (pos < tokens.size() &&
+    while (pos < end &&
            !(tokens[pos].type == TokenType::Keyword &&
              (tokens[pos].value == "WHERE" || tokens[pos].value == "GROUP" ||
               tokens[pos].value == "ORDER" || tokens[pos].value == "HAVING" ||
@@ -321,11 +347,11 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     query.joins.push_back(std::move(jc));
   }
 
-  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+  if (pos < end && tokens[pos].type == TokenType::Keyword &&
       tokens[pos].value == "WHERE") {
     pos++;
     size_t start = pos;
-    while (pos < tokens.size() &&
+    while (pos < end &&
            !(tokens[pos].type == TokenType::Keyword &&
              (tokens[pos].value == "GROUP" || tokens[pos].value == "ORDER" ||
               tokens[pos].value == "HAVING" || tokens[pos].value == "LIMIT")))
@@ -335,14 +361,14 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     query.where = parse_expression(w);
   }
 
-  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+  if (pos < end && tokens[pos].type == TokenType::Keyword &&
       tokens[pos].value == "GROUP") {
     pos++;
     expect_kw("BY");
     GroupByClause gb;
-    while (pos < tokens.size()) {
+    while (pos < end) {
       size_t start = pos;
-      while (pos < tokens.size() &&
+      while (pos < end &&
              !(tokens[pos].type == TokenType::Operator &&
                tokens[pos].value == ",") &&
              !(tokens[pos].type == TokenType::Keyword &&
@@ -351,15 +377,18 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
       std::vector<Token> key(tokens.begin() + start, tokens.begin() + pos);
       key.push_back({TokenType::End, ""});
       gb.keys.push_back(parse_expression(key));
-      if (pos < tokens.size() && tokens[pos].type == TokenType::Operator &&
+      if (pos < end && tokens[pos].type == TokenType::Operator &&
           tokens[pos].value == ",")
         pos++;
+
       if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
           (tokens[pos].value == "ORDER" || tokens[pos].value == "HAVING"))
+
         break;
     }
     query.group_by = std::move(gb);
   }
+
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
       tokens[pos].value == "HAVING") {
@@ -375,11 +404,12 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
   }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+
       tokens[pos].value == "ORDER") {
     pos++;
     expect_kw("BY");
     size_t start = pos;
-    while (pos < tokens.size() &&
+    while (pos < end &&
            !(tokens[pos].type == TokenType::Keyword &&
              (tokens[pos].value == "ASC" || tokens[pos].value == "DESC")))
       pos++;
@@ -388,7 +418,7 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     OrderByClause ob;
     ob.expr = parse_expression(ord);
     ob.ascending = true;
-    if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+    if (pos < end && tokens[pos].type == TokenType::Keyword &&
         (tokens[pos].value == "ASC" || tokens[pos].value == "DESC")) {
       ob.ascending = tokens[pos].value == "ASC";
       pos++;
@@ -396,14 +426,19 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     query.order_by = std::move(ob);
   }
 
-  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+  if (pos < end && tokens[pos].type == TokenType::Keyword &&
       tokens[pos].value == "LIMIT") {
     pos++;
-    if (pos >= tokens.size() || tokens[pos].type != TokenType::Number)
+    if (pos >= end || tokens[pos].type != TokenType::Number)
       throw std::runtime_error("Expected numeric value after LIMIT");
     LimitClause lc{std::stoi(tokens[pos].value)};
     pos++;
     query.limit = lc;
+  }
+
+  if (pos != end) {
+    throw std::runtime_error("Unexpected token in query near: " +
+                             tokens[pos].value);
   }
 
   return query;

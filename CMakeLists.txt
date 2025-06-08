@@ -25,6 +25,7 @@ set(WARPDB_SRC
     src/expression.cpp
     src/jit.cpp
     src/arrow_utils.cpp
+    src/multi_gpu_utils.cpp
     src/optimizer.cpp
 )
 
@@ -71,6 +72,13 @@ add_executable(query_parser_test
 
 add_test(NAME query_parser_test COMMAND query_parser_test)
 
+add_executable(parsing_error_tests
+    tests/parsing_error_tests.cpp
+    src/expression.cpp
+)
+
+add_test(NAME parsing_error_tests COMMAND parsing_error_tests)
+
 
 add_executable(sql_features_test
     tests/sql_features_test.cpp
@@ -106,6 +114,7 @@ add_library(warpdb_lib STATIC
     src/expression.cpp
     src/jit.cpp
     src/arrow_utils.cpp
+    src/multi_gpu_utils.cpp
 )
 
 set_target_properties(warpdb_lib PROPERTIES
@@ -122,16 +131,23 @@ set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 
 
-find_package(pybind11 CONFIG QUIET)
-if(pybind11_FOUND)
-    pybind11_add_module(pywarpdb bindings/python/pywarpdb.cpp)
-    target_link_libraries(pywarpdb PRIVATE warpdb_lib)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_test(NAME python_module_test
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python.py)
-    set_tests_properties(python_module_test PROPERTIES
-        DEPENDS pywarpdb
-        ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pywarpdb>")
+option(WARPDB_BUILD_PYTHON "Build Python bindings with pybind11" ON)
+
+if(WARPDB_BUILD_PYTHON)
+    find_package(pybind11 CONFIG QUIET)
+    if(pybind11_FOUND)
+        message(STATUS "Found pybind11 - building Python bindings")
+        pybind11_add_module(pywarpdb bindings/python/pywarpdb.cpp)
+        target_link_libraries(pywarpdb PRIVATE warpdb_lib)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME python_module_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python.py)
+        set_tests_properties(python_module_test PROPERTIES
+            DEPENDS pywarpdb
+            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pywarpdb>")
+    else()
+        message(STATUS "pybind11 not found - Python bindings will not be built")
+    endif()
 endif()
 
 # Test building without Apache Arrow available
