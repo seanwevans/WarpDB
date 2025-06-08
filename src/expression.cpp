@@ -126,9 +126,11 @@ ASTNodePtr parse_factor() {
 ASTNodePtr parse_expression(const std::vector<Token> &tokens) {
   current = 0;
   toks = tokens;
+
   ASTNodePtr node = parse_comparison();
   if (peek().type != TokenType::End) {
     throw std::runtime_error("Unexpected tokens remaining: " + peek().value);
   }
   return node;
+
 }

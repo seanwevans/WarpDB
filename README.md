@@ -37,12 +37,16 @@ WarpDB consists of the following main components:
 - C++17 compatible compiler
 - NVIDIA GPU with compute capability 7.0 or higher
 
+The build system uses `find_package(CUDAToolkit)` to automatically locate
+NVRTC and the CUDA driver. Ensure the CUDA toolkit is installed and available
+in your environment.
+
 ## Building
 
 ```bash
 mkdir build
 cd build
-cmake ..
+cmake ..  # CMake will locate the CUDA toolkit automatically
 make
 ```
 
