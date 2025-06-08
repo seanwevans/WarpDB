@@ -61,6 +61,7 @@ WarpDB consists of the following main components:
 - C++17 compatible compiler
 - NVIDIA GPU with compute capability 7.0 or higher
 - [Optional] Apache Arrow with CUDA support for zero-copy columnar data
+- [Optional] `pybind11` to build the Python module
 
 The build system uses `find_package(CUDAToolkit)` to automatically locate
 NVRTC and the CUDA driver. Ensure the CUDA toolkit is installed and available
@@ -72,9 +73,12 @@ in your environment.
 mkdir build
 cd build
 cmake ..  # CMake will locate the CUDA toolkit automatically
-# Arrow is discovered via `find_package(Arrow)` when available
+# Arrow and pybind11 are discovered via `find_package` when installed
 make
 ```
+
+When `pybind11` is available a `pywarpdb` Python module is generated in the
+build directory alongside the C++ binaries.
 
 ## Usage
 
@@ -106,7 +110,8 @@ You can then invoke the function in a query:
 
 ### Python API
 
-You can also use WarpDB directly from Python if `pybind11` is available:
+You can also use WarpDB directly from Python if `pybind11` is available.
+The bindings are compiled during the CMake build when `pybind11` is detected:
 
 ```python
 import pywarpdb
@@ -135,6 +140,9 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 
 # Calculate total cost with tax
 ./warpdb "price * quantity * 1.08"
+
+# Use the SQL helper for GROUP BY
+./warpdb "SELECT SUM(price) FROM test GROUP BY quantity"
 ```
 
 ### Multi-GPU Example
@@ -214,6 +222,8 @@ WarpDB implements several CUDA kernels:
 - Only supports simple CSV files with basic data types
 - Basic support for joins, aggregations, and ordering
 - Limited error handling for malformed queries
+- Loading Parquet/Arrow/ORC files requires Apache Arrow
+- Building the Python module requires `pybind11`
 
 ## Future Improvements
 

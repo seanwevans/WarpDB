@@ -101,14 +101,24 @@ void jit_compile_and_launch(const std::string &expr_code,
 
   // Load to CUDA
   CUdevice cuDevice;
-  CUcontext context;
-  CUmodule module;
+  struct CuContextGuard {
+    CUcontext ctx{nullptr};
+    ~CuContextGuard() {
+      if (ctx) cuCtxDestroy(ctx);
+    }
+  } context;
+  struct CuModuleGuard {
+    CUmodule mod{nullptr};
+    ~CuModuleGuard() {
+      if (mod) cuModuleUnload(mod);
+    }
+  } module;
   CUfunction kernel_func;
   CU_CHECK(cuInit(0));
   CU_CHECK(cuDeviceGet(&cuDevice, device_id));
-  CU_CHECK(cuCtxCreate(&context, 0, cuDevice));
-  CU_CHECK(cuModuleLoadDataEx(&module, ptx.c_str(), 0, nullptr, nullptr));
-  CU_CHECK(cuModuleGetFunction(&kernel_func, module, "user_kernel"));
+  CU_CHECK(cuCtxCreate(&context.ctx, 0, cuDevice));
+  CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
+  CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "user_kernel"));
 
   // Launch
   std::vector<void *> args;
@@ -123,7 +133,5 @@ void jit_compile_and_launch(const std::string &expr_code,
                           args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
 
-  // Cleanup
-  cuModuleUnload(module);
-  cuCtxDestroy(context);
+  // Cleanup handled by RAII guards
 }
