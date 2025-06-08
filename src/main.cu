@@ -7,19 +7,18 @@
 #include "jit.hpp"
 #include "arrow_utils.hpp"
 #include "optimizer.hpp"
-
-// Simple multi-GPU execution of a JIT compiled expression.
-// Splits the input table across all available devices and aggregates the output.
-void run_multi_gpu_jit(const std::string &expr_cuda,
-                       const std::string &cond_cuda) {
-  HostTable host = load_csv_to_host("data/test.csv");
-
+#include <fstream>
+// Execute a JIT compiled expression across all available GPUs for the provided
+// host table chunk. Returns the aggregated results.
+std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
+                                          const std::string &expr_cuda,
+                                          const std::string &cond_cuda) {
   int device_count = 0;
   cudaGetDeviceCount(&device_count);
   if (device_count < 2) {
     std::cout << "Only " << device_count
               << " GPU detected. Skipping multi-device example.\n";
-    return;
+    return {};
   }
 
   int N = host.num_rows();
@@ -53,10 +52,50 @@ void run_multi_gpu_jit(const std::string &expr_cuda,
     cudaFree(dtab.d_quantity);
   }
 
-  for (int i = 0; i < N; ++i) {
+  return results;
+}
+
+// Convenience wrapper that loads the sample CSV and prints the results.
+void run_multi_gpu_jit(const std::string &expr_cuda,
+                       const std::string &cond_cuda) {
+  HostTable host = load_csv_to_host("data/test.csv");
+  auto results = run_multi_gpu_jit_host(host, expr_cuda, cond_cuda);
+  for (size_t i = 0; i < results.size(); ++i) {
     std::cout << "MultiGPU Result[" << i << "] = " << results[i] << "\n";
   }
 }
+
+// Process a CSV file in chunks using all GPUs and aggregate results.
+void run_multi_gpu_jit_large(const std::string &csv_path,
+                             const std::string &expr_cuda,
+                             const std::string &cond_cuda,
+                             int rows_per_chunk = 1000000) {
+  std::ifstream file(csv_path);
+  if (!file.is_open()) {
+    std::cerr << "Failed to open file: " << csv_path << "\n";
+    return;
+  }
+
+  std::string header;
+  std::getline(file, header);
+
+  bool finished = false;
+  std::vector<float> all_results;
+  while (!finished) {
+    HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished);
+    if (chunk.num_rows() == 0)
+      break;
+    auto part = run_multi_gpu_jit_host(chunk, expr_cuda, cond_cuda);
+    all_results.insert(all_results.end(), part.begin(), part.end());
+  }
+
+  for (size_t i = 0; i < all_results.size(); ++i) {
+    std::cout << "Large MultiGPU Result[" << i << "] = " << all_results[i]
+              << "\n";
+  }
+}
+
+
 
 __global__ void print_first_few(float *price, int *quantity, int N) {
   int idx = threadIdx.x;
@@ -387,6 +426,9 @@ int main(int argc, char **argv) {
 
   std::cout << "\n[ Multi-GPU JIT Example ]\n";
   run_multi_gpu_jit(expr_cuda, condition_cuda);
+
+  std::cout << "\n[ Large Multi-GPU Example ]\n";
+  run_multi_gpu_jit_large("data/test.csv", expr_cuda, condition_cuda, 1024);
 
 
   delete[] h_jit_output;
