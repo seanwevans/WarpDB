@@ -1,12 +1,12 @@
 // src/jit.cpp
 #include "jit.hpp"
 #include <cuda.h>
+#include <fstream>
 #include <iostream>
 #include <nvrtc.h>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
-#include <fstream>
-#include <sstream>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -28,13 +28,9 @@
   } while (0)
 
 void jit_compile_and_launch(const std::string &expr_code,
-
                             const std::string &condition_code,
-                            const Table &table, float *d_output) {
-
-                            const std::string &condition_code, float *d_price,
-                            int *d_quantity, float *d_output, int N,
-                            int device_id) {
+                            float *d_price, int *d_quantity,
+                            float *d_output, int N, int device_id) {
 
   std::string body;
   if (!condition_code.empty()) {
@@ -45,21 +41,6 @@ void jit_compile_and_launch(const std::string &expr_code,
   }
 
 
-  std::string param_list;
-  for (size_t i = 0; i < table.columns.size(); ++i) {
-    const auto &col = table.columns[i];
-    param_list += (col.type == DataType::Float32 ? "float* " : "int* ");
-    param_list += col.name;
-    param_list += ", ";
-  }
-  param_list += "float* output, int N";
-
-  std::string kernel = "extern \"C\" __global__\n";
-  kernel += "void user_kernel(" + param_list + ") {\n";
-  kernel += "    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n";
-  kernel += "    if (idx >= N) return;\n";
-  kernel += "    " + body + "\n";
-  kernel += "}";
 
   std::string custom_code;
   {
@@ -131,11 +112,9 @@ void jit_compile_and_launch(const std::string &expr_code,
 
   // Launch
   std::vector<void *> args;
-  for (const auto &col : table.columns) {
-    args.push_back(const_cast<void *>(&col.device_ptr));
-  }
+  args.push_back(&d_price);
+  args.push_back(&d_quantity);
   args.push_back(&d_output);
-  int N = table.num_rows;
   args.push_back(&N);
 
   int threads = 128;
