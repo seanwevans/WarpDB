@@ -77,7 +77,22 @@ void jit_compile_and_launch(const std::string &expr_code,
   NVRTC_CHECK(
       nvrtcCreateProgram(&prog.prog, kernel.c_str(), "user_kernel.cu", 0,
                          nullptr, nullptr));
-  const char *opts[] = {"--gpu-architecture=compute_70"};
+
+  // Determine the compute capability of the target device and compile
+  // for that architecture rather than a hard coded value.
+  CU_CHECK(cuInit(0));
+  CUdevice query_device;
+  CU_CHECK(cuDeviceGet(&query_device, device_id));
+  int major = 0, minor = 0;
+  CU_CHECK(cuDeviceGetAttribute(&major,
+                                CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+                                query_device));
+  CU_CHECK(cuDeviceGetAttribute(&minor,
+                                CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+                                query_device));
+  std::string arch_flag = "--gpu-architecture=compute_" +
+                          std::to_string(major) + std::to_string(minor);
+  const char *opts[] = {arch_flag.c_str()};
   nvrtcResult compileResult = nvrtcCompileProgram(prog.prog, 1, opts);
 
   size_t logSize;

@@ -86,6 +86,13 @@ add_executable(jit_error_test
 target_link_libraries(jit_error_test PRIVATE CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_error_test COMMAND jit_error_test)
 
+add_executable(jit_arch_test
+    tests/jit_arch_test.cpp
+    src/jit.cpp
+)
+target_link_libraries(jit_arch_test PRIVATE CUDA::nvrtc CUDA::cuda_driver)
+add_test(NAME jit_arch_test COMMAND jit_arch_test)
+
 add_library(warpdb_lib STATIC
     src/warpdb.cpp
     src/csv_loader.cpp
