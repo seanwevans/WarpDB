@@ -94,11 +94,19 @@ add_library(warpdb_lib STATIC
     src/jit.cpp
     src/arrow_utils.cpp
 )
-set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+set_target_properties(warpdb_lib PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)
 
 find_package(pybind11 CONFIG QUIET)
 if(pybind11_FOUND)
     pybind11_add_module(pywarpdb bindings/python/pywarpdb.cpp)
     target_link_libraries(pywarpdb PRIVATE warpdb_lib)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME python_module_test
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python.py)
+    set_tests_properties(python_module_test PROPERTIES
+        DEPENDS pywarpdb
+        ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pywarpdb>")
 endif()
