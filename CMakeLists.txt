@@ -13,6 +13,7 @@ add_executable(warpdb
     src/csv_loader.cpp
     src/expression.cpp
     src/jit.cpp
+    src/optimizer.cpp
 )
 
 set_target_properties(warpdb PROPERTIES
