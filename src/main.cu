@@ -5,6 +5,7 @@
 #include "csv_loader.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
+#include "arrow_utils.hpp"
 #include "optimizer.hpp"
 
 // Simple multi-GPU execution of a JIT compiled expression.
@@ -322,8 +323,18 @@ int main(int argc, char **argv) {
     std::cout << "JIT Result[" << i << "] = " << h_jit_output[i] << "\n";
   }
 
+
+  // Export results to Arrow for external visualization
+  ArrowArray arr;
+  ArrowSchema schema;
+  export_to_arrow(h_jit_output, table.num_rows, false, &arr, &schema);
+  std::cout << "Arrow result length: " << arr.length << "\n";
+  arr.release(&arr);
+  schema.release(&schema);
+
   std::cout << "\n[ Multi-GPU JIT Example ]\n";
   run_multi_gpu_jit(expr_cuda, condition_cuda);
+
 
   delete[] h_jit_output;
 

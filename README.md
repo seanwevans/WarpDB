@@ -195,3 +195,4 @@ WarpDB implements several CUDA kernels:
 - Support for more data sources and formats
 - Query optimization based on data statistics
 - Multi-GPU support for larger datasets
+- Return results as Arrow buffers for easy sharing

@@ -15,6 +15,7 @@ add_executable(warpdb
     src/arrow_loader.cpp
     src/expression.cpp
     src/jit.cpp
+    src/arrow_utils.cpp
     src/optimizer.cpp
 )
 
