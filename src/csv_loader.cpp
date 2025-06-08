@@ -103,6 +103,8 @@ Table upload_to_gpu(const HostTable &host, const std::vector<DataType> &schema) 
   return table;
 }
 
+Table upload_to_gpu(const HostTable &host) { return upload_to_gpu(host, {}); }
+
 Table load_csv_to_gpu(const std::string &filepath, const std::vector<DataType> &schema) {
 #ifdef USE_ARROW
   if (schema.empty()) {

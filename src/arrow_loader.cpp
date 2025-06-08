@@ -7,14 +7,12 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
-#include "arrow_loader.hpp"
 #include <arrow/api.h>
 #include <arrow/io/file.h>
 #include <arrow/ipc/api.h>
 #include <parquet/arrow/reader.h>
 #include <arrow/adapters/orc/adapter.h>
 #include <cuda_runtime.h>
-#include <iostream>
 
 #define CUDA_CHECK(err) \
   do { \
