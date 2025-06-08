@@ -9,6 +9,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Expression Parsing & Code Generation**: Parse SQL-like expressions and automatically generate optimized CUDA code
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
+- **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
 - **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
 
 ## Architecture
@@ -57,6 +58,28 @@ make
 ./warpdb "query_expression [WHERE condition]"
 ```
 
+
+### Custom CUDA Functions
+
+WarpDB looks for a file named `custom.cu` in the working directory at runtime.
+Any functions defined in this file are appended to the generated kernel and can
+be used in expressions. Functions should be marked with `__device__` so they are
+callable from GPU kernels.
+
+Example `custom.cu`:
+
+```cpp
+__device__ float discount(float price, float rate) {
+    return price * rate;
+}
+```
+
+You can then invoke the function in a query:
+
+```bash
+./warpdb "discount(price, 0.9)"
+```
+
 ### Python API
 
 You can also use WarpDB directly from Python if `pybind11` is available:
@@ -95,6 +118,7 @@ print(result)
 │   ├── csv_loader.hpp      # CSV loading interface
 │   ├── expression.hpp      # Expression parsing
 │   └── jit.hpp             # JIT compilation interface
+├── custom.cu               # User-provided CUDA functions (optional)
 └── src/                    # Source files
     ├── csv_loader.cpp      # CSV loading implementation
     ├── expression.cpp      # Expression parsing implementation

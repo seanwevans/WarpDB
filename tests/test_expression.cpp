@@ -15,6 +15,12 @@ int main() {
     std::string code2 = ast2->to_cuda_expr();
     assert(code2 == "(quantity[idx] <= 5.0f)");
 
+    // custom function call
+    auto tokens3 = tokenize("discount(price, 0.9)");
+    auto ast3 = parse_expression(tokens3);
+    std::string code3 = ast3->to_cuda_expr();
+    assert(code3 == "discount(price[idx], 0.9f)");
+
     std::cout << "All parser tests passed\n";
     return 0;
 }

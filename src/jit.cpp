@@ -4,6 +4,8 @@
 #include <iostream>
 #include <nvrtc.h>
 #include <stdexcept>
+#include <fstream>
+#include <sstream>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -35,7 +37,17 @@ void jit_compile_and_launch(const std::string &expr_code,
     body = "output[idx] = " + expr_code + ";";
   }
 
-  std::string kernel = R"(
+  std::string custom_code;
+  {
+    std::ifstream in("custom.cu");
+    if (in) {
+      std::stringstream ss;
+      ss << in.rdbuf();
+      custom_code = ss.str();
+    }
+  }
+
+  std::string kernel = custom_code + R"(
     extern "C" __global__
     void user_kernel(float* price, int* quantity, float* output, int N) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
