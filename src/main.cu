@@ -55,10 +55,11 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
   return results;
 }
 
-// Convenience wrapper that loads the sample CSV and prints the results.
-void run_multi_gpu_jit(const std::string &expr_cuda,
+// Convenience wrapper that loads a CSV and prints the results.
+void run_multi_gpu_jit(const std::string &csv_path,
+                       const std::string &expr_cuda,
                        const std::string &cond_cuda) {
-  HostTable host = load_csv_to_host("data/test.csv");
+  HostTable host = load_csv_to_host(csv_path);
   auto results = run_multi_gpu_jit_host(host, expr_cuda, cond_cuda);
   for (size_t i = 0; i < results.size(); ++i) {
     std::cout << "MultiGPU Result[" << i << "] = " << results[i] << "\n";
@@ -163,10 +164,13 @@ __global__ void project_revenue_and_adjusted(float *price, int *quantity,
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cerr << "Usage: ./warpdb \"<expression>\"\n";
+    std::cerr << "Usage: ./warpdb \"<expression>\" [data_file]\n";
     return 1;
   }
   std::string user_query = argv[1];
+  std::string csv_path = "data/test.csv";
+  if (argc >= 3)
+    csv_path = argv[2];
   std::string upper_query = user_query;
   for (auto &c : upper_query)
     c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -183,7 +187,7 @@ int main(int argc, char **argv) {
   if (!where_part.empty())
     std::cout << "Where: " << where_part << "\n";
 
-  Table table = load_csv_to_gpu("data/test.csv");
+  Table table = load_csv_to_gpu(csv_path);
   std::cout << "Loaded " << table.num_rows << " rows.\n";
   float *d_price = table.get_column_ptr<float>("price");
   int *d_quantity = table.get_column_ptr<int>("quantity");
@@ -393,13 +397,13 @@ int main(int argc, char **argv) {
   auto ast = parse_expression(tokens);
   std::cout << "\nParsed Expression (CUDA):\n";
 
-  std::string cuda_expr = ast->to_cuda_expr();
-  std::cout << cuda_expr << "\n";
+  std::string expr_cuda = ast->to_cuda_expr();
+  std::cout << expr_cuda << "\n";
 
   // compile
   std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
 
-  jit_compile_and_launch(expr_cuda, condition_cuda,
+  jit_compile_and_launch(cuda_expr, condition_cuda,
 #ifdef USE_ARROW
                          reinterpret_cast<float *>(table.d_price->mutable_data()),
                          reinterpret_cast<int *>(table.d_quantity->mutable_data()),
@@ -425,11 +429,11 @@ int main(int argc, char **argv) {
   schema.release(&schema);
 
   std::cout << "\n[ Multi-GPU JIT Example ]\n";
-  run_multi_gpu_jit(expr_cuda, condition_cuda);
+
+  run_multi_gpu_jit(csv_path, cuda_expr, condition_cuda);
 
   std::cout << "\n[ Large Multi-GPU Example ]\n";
-  run_multi_gpu_jit_large("data/test.csv", expr_cuda, condition_cuda, 1024);
-
+  run_multi_gpu_jit_large(csv_path, cuda_expr, condition_cuda, 1024);
 
   delete[] h_jit_output;
 

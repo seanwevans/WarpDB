@@ -79,6 +79,8 @@ struct FunctionCallNode : public ASTNode {
 
 // Entry point
 ASTNodePtr parse_expression(const std::vector<Token> &tokens);
+ASTNodePtr parse_logical_and(const std::vector<Token> &tokens);
+ASTNodePtr parse_logical_or(const std::vector<Token> &tokens);
 enum class AggregationType { Sum, Avg, Count, Min, Max };
 
 struct AggregationNode : public ASTNode {
@@ -93,6 +95,10 @@ struct AggregationNode : public ASTNode {
 struct OrderByClause {
   ASTNodePtr expr;
   bool ascending;
+};
+
+struct LimitClause {
+  int count;
 };
 
 struct WindowFunctionNode : public ASTNode {
@@ -122,6 +128,7 @@ struct QueryAST {
   std::optional<ASTNodePtr> where;
   std::optional<GroupByClause> group_by;
   std::optional<OrderByClause> order_by;
+  std::optional<LimitClause> limit;
 };
 
 QueryAST parse_query(const std::vector<Token> &tokens);

@@ -107,13 +107,23 @@ WarpDB::WarpDB(const std::string &filepath) {
         host_table_ = load_csv_to_host(filepath);
     } else if (ext == "json") {
         table_ = load_json_to_gpu(filepath);
+
         host_table_ = load_json_to_host(filepath);
+
+#ifdef USE_ARROW
+
     } else if (ext == "parquet") {
         table_ = load_parquet_to_gpu(filepath);
     } else if (ext == "arrow" || ext == "feather") {
         table_ = load_arrow_to_gpu(filepath);
     } else if (ext == "orc") {
         table_ = load_orc_to_gpu(filepath);
+#else
+    } else if (ext == "parquet" || ext == "arrow" || ext == "feather" ||
+               ext == "orc") {
+        throw std::runtime_error(
+            "Arrow support is not compiled into WarpDB");
+#endif
     } else {
         throw std::runtime_error("Unsupported file format: " + filepath);
     }
@@ -291,6 +301,11 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         });
         result.clear();
         for (const auto &kv : keyed) result.push_back(kv.second);
+    }
+
+    if (ast.limit) {
+        if (static_cast<size_t>(ast.limit->count) < result.size())
+            result.resize(ast.limit->count);
     }
 
     return result;

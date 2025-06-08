@@ -80,11 +80,18 @@ make
 When `pybind11` is available a `pywarpdb` Python module is generated in the
 build directory alongside the C++ binaries.
 
+## Testing
+
+Run `ctest` from the `build` directory to execute the project's tests. Some
+tests rely on CUDA and optional libraries like Arrow or pybind11.
+
 ## Usage
 
 ```bash
-./warpdb "query_expression [WHERE condition]"
+./warpdb "query_expression [WHERE condition]" [data_file]
 ```
+
+If `data_file` is omitted, WarpDB loads `data/test.csv` by default.
 
 
 ### Custom CUDA Functions
@@ -143,9 +150,12 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 
 # Use the SQL helper for GROUP BY
 ./warpdb "SELECT SUM(price) FROM test GROUP BY quantity"
+# Limit results after sorting
+./warpdb "SELECT price FROM test ORDER BY price DESC LIMIT 5"
 ```
 
 ### Multi-GPU Example
+
 
 WarpDB exposes `query_multi_gpu` and `query_multi_gpu_csv` to run expressions on
 all available GPUs. The CSV variant streams the file in chunks so datasets can
@@ -159,6 +169,14 @@ result = db.query_multi_gpu("price * quantity")
 big_res = pywarpdb.WarpDB.query_multi_gpu_csv(
     "large.csv", "price * quantity", rows_per_chunk=1_000_000)
 ```
+
+WarpDB includes helpers `run_multi_gpu_jit` and `run_multi_gpu_jit_large`
+demonstrating how to split the input table across available GPUs and execute the
+same JIT-compiled kernel on each device. Both functions now take the CSV file
+path as their first argument. The `run_multi_gpu_jit_large` variant streams the
+CSV file in chunks, enabling processing of datasets larger than a single GPU's
+memory. Results are aggregated back on the host.
+
 
 ## Project Structure
 
@@ -237,13 +255,13 @@ The project has recently gained several improvements:
 
 - Currently supports a limited subset of SQL functionality
 - Only supports simple CSV files with basic data types
-- Basic support for joins, aggregations, and ordering
+- Basic support for joins, aggregations, ordering, and LIMIT clauses
 - Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
 - Building the Python module requires `pybind11`
 
 ## Future Improvements
 
-- Extend SQL support beyond the basic JOIN/GROUP BY/ORDER BY implementation
+- Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY and LIMIT
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
