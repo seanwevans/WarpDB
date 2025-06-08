@@ -15,6 +15,7 @@ struct ColumnDesc {
   DataType type;
   void *device_ptr;
   int length;
+};
 
 struct ColumnStatsFloat {
   float min = 0.0f;
@@ -48,6 +49,7 @@ struct Table {
 
   int num_rows;
 
+  TableStats stats; // basic column statistics
 
   template <typename T>
   T *get_column_ptr(const std::string &name) const {
@@ -62,9 +64,6 @@ struct Table {
 Table load_csv_to_gpu(const std::string &filepath,
                       const std::vector<DataType> &schema = {});
 
-  TableStats stats; // basic column statistics
-};
-
 struct HostTable {
   std::vector<float> price;
   std::vector<int> quantity;
@@ -73,5 +72,4 @@ struct HostTable {
 
 HostTable load_csv_to_host(const std::string &filepath);
 Table upload_to_gpu(const HostTable &table);
-Table load_csv_to_gpu(const std::string &filepath);
 
