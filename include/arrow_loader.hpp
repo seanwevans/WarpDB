@@ -1,4 +1,5 @@
 #pragma once
+
 #include <memory>
 #include <string>
 #ifdef USE_ARROW
@@ -17,3 +18,11 @@ struct ArrowTable {
 #ifdef USE_ARROW
 ArrowTable load_csv_arrow(const std::string &filepath);
 #endif
+
+#include <string>
+#include "csv_loader.hpp" // for Table structure
+
+Table load_parquet_to_gpu(const std::string &filepath);
+Table load_arrow_to_gpu(const std::string &filepath);
+Table load_orc_to_gpu(const std::string &filepath);
+
