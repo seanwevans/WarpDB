@@ -8,7 +8,10 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Dynamic CUDA Kernel Compilation**: JIT-compile custom CUDA kernels at runtime based on user expressions
 - **Expression Parsing & Code Generation**: Parse SQL-like expressions and automatically generate optimized CUDA code
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
+- **Parquet/Arrow/ORC Loading**: Use Apache Arrow to ingest columnar formats
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
+- **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
+- **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
 
 ## Architecture
 
@@ -17,6 +20,10 @@ WarpDB consists of the following main components:
 ### CSV Loader
 - Loads CSV data directly into GPU memory with minimal CPU intervention
 - Handles data type conversion and memory allocation
+
+### Arrow Loader
+- Reads Parquet, Arrow, and ORC files using Apache Arrow
+- Transfers columns to GPU memory
 
 ### SQL Parser
 - Tokenizes and parses SQL-like expressions into an Abstract Syntax Tree (AST)
@@ -56,6 +63,40 @@ make
 ./warpdb "query_expression [WHERE condition]"
 ```
 
+
+### Custom CUDA Functions
+
+WarpDB looks for a file named `custom.cu` in the working directory at runtime.
+Any functions defined in this file are appended to the generated kernel and can
+be used in expressions. Functions should be marked with `__device__` so they are
+callable from GPU kernels.
+
+Example `custom.cu`:
+
+```cpp
+__device__ float discount(float price, float rate) {
+    return price * rate;
+}
+```
+
+You can then invoke the function in a query:
+
+```bash
+./warpdb "discount(price, 0.9)"
+```
+
+### Python API
+
+You can also use WarpDB directly from Python if `pybind11` is available:
+
+```python
+import pywarpdb
+
+db = pywarpdb.WarpDB("data/test.csv")
+result = db.query("price * quantity WHERE price > 10")
+print(result)
+```
+
 ### Example Queries
 
 ```bash
@@ -86,10 +127,13 @@ each device. Results are aggregated back on the host.
 │   └── test.csv            # Test data
 ├── include/                # Header files
 │   ├── csv_loader.hpp      # CSV loading interface
+│   ├── arrow_loader.hpp    # Parquet/Arrow/ORC loading interface
 │   ├── expression.hpp      # Expression parsing
 │   └── jit.hpp             # JIT compilation interface
+├── custom.cu               # User-provided CUDA functions (optional)
 └── src/                    # Source files
     ├── csv_loader.cpp      # CSV loading implementation
+    ├── arrow_loader.cpp    # Columnar format loading implementation
     ├── expression.cpp      # Expression parsing implementation
     ├── jit.cpp             # JIT compilation implementation
     └── main.cu             # Main application and CUDA kernels
@@ -98,11 +142,12 @@ each device. Results are aggregated back on the host.
 ## How It Works
 
 1. **CSV Loading**: Input data is loaded from CSV files directly into GPU memory.
-2. **Query Parsing**: User queries are tokenized and parsed into an AST.
-3. **Code Generation**: The AST is converted into CUDA code.
-4. **JIT Compilation**: The generated code is compiled into a CUDA kernel using NVRTC.
-5. **Execution**: The compiled kernel is executed on the GPU.
-6. **Result Retrieval**: Results are copied back to host memory and displayed.
+2. **Columnar Loading**: Parquet, Arrow, and ORC files are read via Apache Arrow and moved to GPU memory.
+3. **Query Parsing**: User queries are tokenized and parsed into an AST.
+4. **Code Generation**: The AST is converted into CUDA code.
+5. **JIT Compilation**: The generated code is compiled into a CUDA kernel using NVRTC.
+6. **Execution**: The compiled kernel is executed on the GPU.
+7. **Result Retrieval**: Results are copied back to host memory and displayed.
 
 ## Technical Details
 
