@@ -225,8 +225,41 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
             g.min = std::min(g.min, (double)val);
             g.max = std::max(g.max, (double)val);
         }
+
+        auto eval_group_expr = [&](const ASTNode *node, const AggData &g)->float {
+            if (auto c = dynamic_cast<const ConstantNode*>(node)) {
+                return std::stof(c->value);
+            } else if (auto ag = dynamic_cast<const AggregationNode*>(node)) {
+                switch(ag->agg){
+                case AggregationType::Sum: return g.sum;
+                case AggregationType::Avg: return g.sum / g.count;
+                case AggregationType::Count: return g.count;
+                case AggregationType::Min: return g.min;
+                case AggregationType::Max: return g.max;
+                }
+            } else if (auto b = dynamic_cast<const BinaryOpNode*>(node)) {
+                float l = eval_group_expr(b->left.get(), g);
+                float r = eval_group_expr(b->right.get(), g);
+                const std::string &op = b->op;
+                if(op=="+") return l+r;
+                if(op=="-") return l-r;
+                if(op=="*") return l*r;
+                if(op=="/") return l/r;
+                if(op==">") return l>r;
+                if(op=="<") return l<r;
+                if(op==">=") return l>=r;
+                if(op=="<=") return l<=r;
+                if(op=="==") return l==r;
+                if(op=="!=") return l!=r;
+            }
+            return 0.0f;
+        };
+
         for (const auto &kv : groups) {
             const AggData &g = kv.second;
+            if (ast.having) {
+                if (!eval_group_expr(ast.having.value().get(), g)) continue;
+            }
             switch (agg->agg) {
             case AggregationType::Sum: result.push_back(g.sum); break;
             case AggregationType::Avg: result.push_back(g.sum / g.count); break;
@@ -239,6 +272,13 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         for (const auto &r : rows) {
             result.push_back(eval_node(ast.select_list[0].get(), r));
         }
+    }
+
+    if (ast.distinct) {
+        std::vector<float> tmp = result;
+        std::sort(tmp.begin(), tmp.end());
+        tmp.erase(std::unique(tmp.begin(), tmp.end()), tmp.end());
+        result.swap(tmp);
     }
 
     if (ast.order_by) {
