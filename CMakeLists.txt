@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.18)
 
 project(WarpDB LANGUAGES CXX CUDA)
 
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(CUDAToolkit REQUIRED)
@@ -51,6 +53,14 @@ add_executable(expression_test
 add_test(NAME expression_test COMMAND expression_test)
 
 
+add_executable(expression_tests
+    tests/expression_tests.cpp
+    src/expression.cpp
+)
+
+add_test(NAME expression_tests COMMAND expression_tests)
+
+
 add_executable(query_parser_test
     tests/query_parser_test.cpp
     src/expression.cpp
@@ -72,5 +82,3 @@ if(pybind11_FOUND)
     pybind11_add_module(pywarpdb bindings/python/pywarpdb.cpp)
     target_link_libraries(pywarpdb PRIVATE warpdb_lib)
 endif()
-
-
