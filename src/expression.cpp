@@ -24,11 +24,10 @@ std::vector<Token> tokenize(const std::string &input) {
       for (auto &c : upper)
         c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
       static const std::unordered_set<std::string> keywords = {
-          "SELECT",   "FROM",  "WHERE", "JOIN", "ON",  "GROUP",
-          "BY",       "ORDER", "ASC",  "DESC", "LIMIT", "SUM", "AVG",
-          "AVG",      "COUNT", "MIN",  "MAX",  "OVER", "PARTITION",          
-          "COUNT",    "MIN",   "MAX",  "OVER", "PARTITION",
-          "AND",      "OR"};
+          "SELECT",   "FROM",    "WHERE",  "JOIN",   "ON",   "GROUP",
+          "BY",       "ORDER",   "ASC",    "DESC",  "LIMIT", "SUM",
+          "AVG",      "COUNT",   "MIN",    "MAX",   "OVER", "PARTITION",
+          "AND",      "OR",      "HAVING", "DISTINCT"};
       if (keywords.count(upper)) {
         tokens.push_back({TokenType::Keyword, upper});
       } else {
@@ -225,6 +224,11 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
 
   QueryAST query;
   expect_kw("SELECT");
+  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+      tokens[pos].value == "DISTINCT") {
+    query.distinct = true;
+    pos++;
+  }
 
   auto parse_select_item = [&](const std::vector<Token> &it) -> ASTNodePtr {
     if (!it.empty() && it[0].type == TokenType::Keyword) {
@@ -296,8 +300,8 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     throw std::runtime_error("Expected table name after FROM");
   query.from_table = tokens[pos++].value;
 
-  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
-      tokens[pos].value == "JOIN") {
+  while (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+         tokens[pos].value == "JOIN") {
     pos++;
     if (pos >= tokens.size() || tokens[pos].type != TokenType::Identifier)
       throw std::runtime_error("Expected table name after JOIN");
@@ -308,12 +312,13 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     while (pos < tokens.size() &&
            !(tokens[pos].type == TokenType::Keyword &&
              (tokens[pos].value == "WHERE" || tokens[pos].value == "GROUP" ||
-              tokens[pos].value == "ORDER")))
+              tokens[pos].value == "ORDER" || tokens[pos].value == "HAVING" ||
+              tokens[pos].value == "JOIN" || tokens[pos].value == "LIMIT")))
       pos++;
     std::vector<Token> cond(tokens.begin() + start, tokens.begin() + pos);
     cond.push_back({TokenType::End, ""});
     jc.condition = parse_expression(cond);
-    query.join = std::move(jc);
+    query.joins.push_back(std::move(jc));
   }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
@@ -322,7 +327,8 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     size_t start = pos;
     while (pos < tokens.size() &&
            !(tokens[pos].type == TokenType::Keyword &&
-             (tokens[pos].value == "GROUP" || tokens[pos].value == "ORDER")))
+             (tokens[pos].value == "GROUP" || tokens[pos].value == "ORDER" ||
+              tokens[pos].value == "HAVING" || tokens[pos].value == "LIMIT")))
       pos++;
     std::vector<Token> w(tokens.begin() + start, tokens.begin() + pos);
     w.push_back({TokenType::End, ""});
@@ -340,7 +346,7 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
              !(tokens[pos].type == TokenType::Operator &&
                tokens[pos].value == ",") &&
              !(tokens[pos].type == TokenType::Keyword &&
-               tokens[pos].value == "ORDER"))
+               (tokens[pos].value == "ORDER" || tokens[pos].value == "HAVING")))
         pos++;
       std::vector<Token> key(tokens.begin() + start, tokens.begin() + pos);
       key.push_back({TokenType::End, ""});
@@ -349,10 +355,23 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
           tokens[pos].value == ",")
         pos++;
       if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
-          tokens[pos].value == "ORDER")
+          (tokens[pos].value == "ORDER" || tokens[pos].value == "HAVING"))
         break;
     }
     query.group_by = std::move(gb);
+  }
+
+  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+      tokens[pos].value == "HAVING") {
+    pos++;
+    size_t start = pos;
+    while (pos < tokens.size() &&
+           !(tokens[pos].type == TokenType::Keyword &&
+             (tokens[pos].value == "ORDER" || tokens[pos].value == "LIMIT")))
+      pos++;
+    std::vector<Token> hv(tokens.begin() + start, tokens.begin() + pos);
+    hv.push_back({TokenType::End, ""});
+    query.having = parse_expression(hv);
   }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
