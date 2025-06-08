@@ -8,6 +8,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Dynamic CUDA Kernel Compilation**: JIT-compile custom CUDA kernels at runtime based on user expressions
 - **Expression Parsing & Code Generation**: Parse SQL-like expressions and automatically generate optimized CUDA code
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
+- **JSON Data Loading**: Read newline-delimited JSON files
 - **Parquet/Arrow/ORC Loading**: Use Apache Arrow to ingest columnar formats
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
 - **Arrow Columnar Format**: Optionally load data using Apache Arrow for zero-copy
@@ -23,6 +24,10 @@ WarpDB consists of the following main components:
 ### CSV Loader
 - Loads CSV data directly into GPU memory with minimal CPU intervention
 - Handles data type conversion and memory allocation
+
+### JSON Loader
+- Parses newline-delimited JSON records containing `price` and `quantity`
+- Uploads parsed columns to GPU memory
 
 
 ### Arrow Integration
@@ -105,7 +110,7 @@ You can also use WarpDB directly from Python if `pybind11` is available:
 ```python
 import pywarpdb
 
-db = pywarpdb.WarpDB("data/test.csv")
+db = pywarpdb.WarpDB("data/test.csv")  # or data/test.json
 result = db.query("price * quantity WHERE price > 10")
 print(result)
 ```
@@ -137,7 +142,8 @@ each device. Results are aggregated back on the host.
 ```
 ├── CMakeLists.txt          # CMake build configuration
 ├── data/                   # Sample data files
-│   └── test.csv            # Test data
+│   ├── test.csv            # Test data
+│   └── test.json           # JSON test data
 ├── include/                # Header files
 │   ├── csv_loader.hpp      # CSV loading interface
 │   ├── arrow_loader.hpp    # Parquet/Arrow/ORC loading interface
@@ -197,7 +203,7 @@ WarpDB implements several CUDA kernels:
 ## Limitations
 
 - Currently supports a limited subset of SQL functionality
-- Only supports simple CSV files with basic data types
+- Only supports simple CSV and JSON files with basic data types
 - No support for joins, aggregations, or complex SQL features yet
 - Limited error handling for malformed queries
 
@@ -205,7 +211,7 @@ WarpDB implements several CUDA kernels:
 
 - Support for more SQL features (JOINs, GROUP BY, ORDER BY)
 - Better error handling and query validation
-- Support for more data sources and formats
+- Additional data source support (e.g. Avro)
 - Query optimization based on data statistics
 - Multi-GPU support for larger datasets
 - Return results as Arrow buffers for easy sharing

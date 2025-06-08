@@ -3,12 +3,13 @@
 #include <vector>
 
 #include "csv_loader.hpp"
+#include "json_loader.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
 
 class WarpDB {
 public:
-    explicit WarpDB(const std::string &csv_path);
+    explicit WarpDB(const std::string &filepath);
     ~WarpDB();
 
     // Execute an expression with optional WHERE clause.

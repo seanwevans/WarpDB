@@ -4,8 +4,24 @@
 #include <cctype>
 #include <iostream>
 
-WarpDB::WarpDB(const std::string &csv_path) {
-    table_ = load_csv_to_gpu(csv_path);
+WarpDB::WarpDB(const std::string &filepath) {
+    auto dot = filepath.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : filepath.substr(dot + 1);
+    for (auto &c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (ext == "csv") {
+        table_ = load_csv_to_gpu(filepath);
+    } else if (ext == "json") {
+        table_ = load_json_to_gpu(filepath);
+    } else if (ext == "parquet") {
+        table_ = load_parquet_to_gpu(filepath);
+    } else if (ext == "arrow" || ext == "feather") {
+        table_ = load_arrow_to_gpu(filepath);
+    } else if (ext == "orc") {
+        table_ = load_orc_to_gpu(filepath);
+    } else {
+        throw std::runtime_error("Unsupported file format: " + filepath);
+    }
 }
 
 WarpDB::~WarpDB() {
