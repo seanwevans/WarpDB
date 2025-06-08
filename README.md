@@ -216,6 +216,16 @@ WarpDB implements several CUDA kernels:
 - `project_revenue`: Calculates revenue (price × quantity)
 - `project_revenue_and_adjusted`: Calculates multiple expressions in one pass
 
+## Development Progress
+
+The project has recently gained several improvements:
+
+- Optional Apache Arrow integration can be enabled with `USE_ARROW`.
+- Basic query optimization uses column statistics for simple filter pushdown.
+- RAII wrappers manage CUDA contexts and modules to avoid resource leaks.
+- Helper functions demonstrate streaming across multiple GPUs.
+- Python bindings are available when `pybind11` is installed.
+
 ## Limitations
 
 - Currently supports a limited subset of SQL functionality
@@ -230,6 +240,4 @@ WarpDB implements several CUDA kernels:
 - Extend SQL support beyond the basic JOIN/GROUP BY/ORDER BY implementation
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
-- Query optimization based on data statistics
-- Return results as Arrow buffers for easy sharing
 - Multi-GPU support for larger datasets
