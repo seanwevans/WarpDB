@@ -80,6 +80,11 @@ make
 When `pybind11` is available a `pywarpdb` Python module is generated in the
 build directory alongside the C++ binaries.
 
+## Testing
+
+Run `ctest` from the `build` directory to execute the project's tests. Some
+tests rely on CUDA and optional libraries like Arrow or pybind11.
+
 ## Usage
 
 ```bash
