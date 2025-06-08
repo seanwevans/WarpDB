@@ -2,8 +2,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <optional>
 
-enum class TokenType { Identifier, Number, Operator, End };
+enum class TokenType { Identifier, Number, Operator, Keyword, End };
 
 struct Token {
   TokenType type;
@@ -12,7 +13,8 @@ struct Token {
 
 std::vector<Token> tokenize(const std::string &input);
 
-enum class ASTNodeType { Constant, Variable, BinaryOp, FunctionCall };
+enum class ASTNodeType { Constant, Variable, BinaryOp, Aggregation };
+
 
 struct ASTNode {
   virtual ~ASTNode() {}
@@ -77,3 +79,48 @@ struct FunctionCallNode : public ASTNode {
 
 // Entry point
 ASTNodePtr parse_expression(const std::vector<Token> &tokens);
+enum class AggregationType { Sum, Avg, Count, Min, Max };
+
+struct AggregationNode : public ASTNode {
+  AggregationType agg;
+  ASTNodePtr expr;
+  AggregationNode(AggregationType a, ASTNodePtr e)
+      : agg(a), expr(std::move(e)) {}
+  std::string to_cuda_expr() const override { return "<agg>"; }
+  ASTNodeType type() const override { return ASTNodeType::Aggregation; }
+};
+
+struct WindowFunctionNode : public ASTNode {
+  AggregationType agg;
+  ASTNodePtr expr;
+  std::vector<ASTNodePtr> partition_by;
+  std::optional<OrderByClause> order_by;
+  WindowFunctionNode(AggregationType a, ASTNodePtr e)
+      : agg(a), expr(std::move(e)) {}
+  std::string to_cuda_expr() const override { return "<window>"; }
+  ASTNodeType type() const override { return ASTNodeType::Aggregation; }
+};
+struct OrderByClause {
+  ASTNodePtr expr;
+  bool ascending;
+};
+
+struct JoinClause {
+  std::string table;
+  ASTNodePtr condition;
+};
+
+struct GroupByClause {
+  std::vector<ASTNodePtr> keys;
+};
+
+struct QueryAST {
+  std::vector<ASTNodePtr> select_list;
+  std::string from_table;
+  std::optional<JoinClause> join;
+  std::optional<ASTNodePtr> where;
+  std::optional<GroupByClause> group_by;
+  std::optional<OrderByClause> order_by;
+};
+
+QueryAST parse_query(const std::vector<Token> &tokens);
