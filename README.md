@@ -13,9 +13,10 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
 - **Arrow Columnar Format**: Optionally load data using Apache Arrow for zero-copy
   interoperability with Pandas, PyTorch, and Spark
+- **Arrow Results**: Retrieve query results as Arrow buffers for easy sharing
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
 - **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
-
+- **Multi-GPU Execution**: Stream large CSV files across multiple GPUs
 
 ## Architecture
 
@@ -113,6 +114,11 @@ import pywarpdb
 db = pywarpdb.WarpDB("data/test.csv")  # or data/test.json
 result = db.query("price * quantity WHERE price > 10")
 print(result)
+
+# Export result as an Arrow array
+arr_capsule, schema_capsule = db.query_arrow("price * quantity")
+import pyarrow as pa
+arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 ```
 
 ### Example Queries
@@ -133,9 +139,11 @@ print(result)
 
 ### Multi-GPU Example
 
-WarpDB includes a helper `run_multi_gpu_jit` demonstrating how to split the
-input table across available GPUs and execute the same JIT-compiled kernel on
-each device. Results are aggregated back on the host.
+WarpDB includes helpers `run_multi_gpu_jit` and `run_multi_gpu_jit_large`
+demonstrating how to split the input table across available GPUs and execute the
+same JIT-compiled kernel on each device. The `run_multi_gpu_jit_large` variant
+streams the CSV file in chunks, enabling processing of datasets larger than a
+single GPU's memory. Results are aggregated back on the host.
 
 ## Project Structure
 
@@ -205,7 +213,6 @@ WarpDB implements several CUDA kernels:
 - Currently supports a limited subset of SQL functionality
 - Only supports simple CSV and JSON files with basic data types
 - No support for joins, aggregations, or complex SQL features yet
-- Limited error handling for malformed queries
 
 ## Future Improvements
 
@@ -213,5 +220,5 @@ WarpDB implements several CUDA kernels:
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
 - Query optimization based on data statistics
-- Multi-GPU support for larger datasets
 - Return results as Arrow buffers for easy sharing
+- Multi-GPU support for larger datasets
