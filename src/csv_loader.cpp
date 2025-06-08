@@ -103,3 +103,31 @@ Table load_csv_to_gpu(const std::string &filepath, const std::vector<DataType> &
 Table load_csv_to_gpu(const std::string &filepath) {
   return load_csv_to_gpu(filepath, {});
 }
+
+HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished) {
+  std::vector<float> prices;
+  std::vector<int> quantities;
+  prices.reserve(max_rows);
+  quantities.reserve(max_rows);
+
+  std::string line;
+  int count = 0;
+  while (count < max_rows && std::getline(stream, line)) {
+    if (line.empty())
+      continue;
+    std::istringstream ss(line);
+    std::string price_str, qty_str;
+    std::getline(ss, price_str, ',');
+    std::getline(ss, qty_str, ',');
+    prices.push_back(std::stof(price_str));
+    quantities.push_back(std::stoi(qty_str));
+    ++count;
+  }
+
+  finished = !stream.good();
+
+  HostTable chunk;
+  chunk.price = std::move(prices);
+  chunk.quantity = std::move(quantities);
+  return chunk;
+}
