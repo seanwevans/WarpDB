@@ -7,20 +7,24 @@ std::vector<Token> tokenize(const std::string &input) {
   size_t i = 0;
 
   while (i < input.size()) {
-    if (std::isspace(input[i])) {
+    if (std::isspace(static_cast<unsigned char>(input[i]))) {
       i++;
       continue;
     }
 
-    if (std::isalpha(input[i])) {
+    if (std::isalpha(static_cast<unsigned char>(input[i]))) {
       std::string ident;
-      while (i < input.size() && std::isalnum(input[i])) {
+      while (i < input.size() &&
+             std::isalnum(static_cast<unsigned char>(input[i]))) {
         ident += input[i++];
       }
       tokens.push_back({TokenType::Identifier, ident});
-    } else if (std::isdigit(input[i]) || input[i] == '.') {
+    } else if (std::isdigit(static_cast<unsigned char>(input[i])) ||
+               input[i] == '.') {
       std::string num;
-      while (i < input.size() && (std::isdigit(input[i]) || input[i] == '.')) {
+      while (i < input.size() &&
+             (std::isdigit(static_cast<unsigned char>(input[i])) ||
+              input[i] == '.')) {
         num += input[i++];
       }
       tokens.push_back({TokenType::Number, num});
