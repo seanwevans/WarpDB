@@ -88,8 +88,10 @@ struct AggregationNode : public ASTNode {
   ASTNodePtr expr;
   AggregationNode(AggregationType a, ASTNodePtr e)
       : agg(a), expr(std::move(e)) {}
-  std::string to_cuda_expr() const override { return "<agg>"; }
+  std::string to_cuda_expr() const override { return expr->to_cuda_expr(); }
   ASTNodeType type() const override { return ASTNodeType::Aggregation; }
+  // Helper used by JIT code generation to name the reduction kernel
+  std::string agg_kernel() const;
 };
 
 struct OrderByClause {

@@ -403,7 +403,7 @@ int main(int argc, char **argv) {
   // compile
   std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
 
-  jit_compile_and_launch(cuda_expr, condition_cuda,
+  jit_compile_and_launch(expr_cuda, condition_cuda,
 #ifdef USE_ARROW
                          reinterpret_cast<float *>(table.d_price->mutable_data()),
                          reinterpret_cast<int *>(table.d_quantity->mutable_data()),
@@ -430,10 +430,10 @@ int main(int argc, char **argv) {
 
   std::cout << "\n[ Multi-GPU JIT Example ]\n";
 
-  run_multi_gpu_jit(csv_path, cuda_expr, condition_cuda);
+  run_multi_gpu_jit(csv_path, expr_cuda, condition_cuda);
 
   std::cout << "\n[ Large Multi-GPU Example ]\n";
-  run_multi_gpu_jit_large(csv_path, cuda_expr, condition_cuda, 1024);
+  run_multi_gpu_jit_large(csv_path, expr_cuda, condition_cuda, 1024);
 
   delete[] h_jit_output;
 
