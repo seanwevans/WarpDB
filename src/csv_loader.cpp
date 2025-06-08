@@ -14,7 +14,7 @@
     }                                                                          \
   } while (0)
 
-Table load_csv_to_gpu(const std::string &filepath) {
+HostTable load_csv_to_host(const std::string &filepath) {
   std::ifstream file(filepath);
   if (!file.is_open()) {
     std::cerr << "Failed to open file: " << filepath << std::endl;
@@ -67,7 +67,14 @@ Table load_csv_to_gpu(const std::string &filepath) {
     }
   }
 
-  const int N = h_price.size();
+  HostTable table;
+  table.price = std::move(h_price);
+  table.quantity = std::move(h_quantity);
+  return table;
+}
+
+Table upload_to_gpu(const HostTable &host) {
+  const int N = host.num_rows();
 
   // Allocate pinned host memory (optional for now)
   float *h_price_pinned;
@@ -75,8 +82,8 @@ Table load_csv_to_gpu(const std::string &filepath) {
   CUDA_CHECK(cudaMallocHost((void **)&h_price_pinned, sizeof(float) * N));
   CUDA_CHECK(cudaMallocHost((void **)&h_quantity_pinned, sizeof(int) * N));
 
-  std::copy(h_price.begin(), h_price.end(), h_price_pinned);
-  std::copy(h_quantity.begin(), h_quantity.end(), h_quantity_pinned);
+  std::copy(host.price.begin(), host.price.end(), h_price_pinned);
+  std::copy(host.quantity.begin(), host.quantity.end(), h_quantity_pinned);
 
   // Allocate device memory
   float *d_price;
@@ -102,4 +109,9 @@ Table load_csv_to_gpu(const std::string &filepath) {
             << " max=" << stats.quantity.max
             << " nulls=" << stats.quantity.null_count << "\n";
   return table;
+}
+
+Table load_csv_to_gpu(const std::string &filepath) {
+  HostTable host = load_csv_to_host(filepath);
+  return upload_to_gpu(host);
 }

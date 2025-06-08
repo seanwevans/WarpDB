@@ -28,7 +28,8 @@
 
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code, float *d_price,
-                            int *d_quantity, float *d_output, int N) {
+                            int *d_quantity, float *d_output, int N,
+                            int device_id) {
   std::string body;
   if (!condition_code.empty()) {
     body = "if (" + condition_code + ") {\n    output[idx] = " + expr_code +
@@ -99,7 +100,7 @@ void jit_compile_and_launch(const std::string &expr_code,
   CUmodule module;
   CUfunction kernel_func;
   CU_CHECK(cuInit(0));
-  CU_CHECK(cuDeviceGet(&cuDevice, 0));
+  CU_CHECK(cuDeviceGet(&cuDevice, device_id));
   CU_CHECK(cuCtxCreate(&context, 0, cuDevice));
   CU_CHECK(cuModuleLoadDataEx(&module, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module, "user_kernel"));

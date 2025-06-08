@@ -7,6 +7,56 @@
 #include "jit.hpp"
 #include "optimizer.hpp"
 
+// Simple multi-GPU execution of a JIT compiled expression.
+// Splits the input table across all available devices and aggregates the output.
+void run_multi_gpu_jit(const std::string &expr_cuda,
+                       const std::string &cond_cuda) {
+  HostTable host = load_csv_to_host("data/test.csv");
+
+  int device_count = 0;
+  cudaGetDeviceCount(&device_count);
+  if (device_count < 2) {
+    std::cout << "Only " << device_count
+              << " GPU detected. Skipping multi-device example.\n";
+    return;
+  }
+
+  int N = host.num_rows();
+  int chunk = (N + device_count - 1) / device_count;
+  std::vector<float> results(N);
+
+  for (int dev = 0; dev < device_count; ++dev) {
+    int start = dev * chunk;
+    int end = std::min(start + chunk, N);
+    if (start >= end)
+      break;
+    int local_N = end - start;
+
+    HostTable sub;
+    sub.price.assign(host.price.begin() + start, host.price.begin() + end);
+    sub.quantity.assign(host.quantity.begin() + start,
+                        host.quantity.begin() + end);
+    Table dtab = upload_to_gpu(sub);
+
+    float *d_out;
+    cudaMalloc(&d_out, sizeof(float) * local_N);
+
+    jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price, dtab.d_quantity,
+                           d_out, local_N, dev);
+
+    cudaMemcpy(results.data() + start, d_out, sizeof(float) * local_N,
+               cudaMemcpyDeviceToHost);
+
+    cudaFree(d_out);
+    cudaFree(dtab.d_price);
+    cudaFree(dtab.d_quantity);
+  }
+
+  for (int i = 0; i < N; ++i) {
+    std::cout << "MultiGPU Result[" << i << "] = " << results[i] << "\n";
+  }
+}
+
 __global__ void print_first_few(float *price, int *quantity, int N) {
   int idx = threadIdx.x;
   if (idx < N && idx < 4) {
@@ -229,6 +279,49 @@ int main(int argc, char **argv) {
 
   std::cout << "\n[ Optimizer Demo ]\n";
   execute_query_optimized(expr_part, where_part, table);
+
+
+  std::string condition_cuda;
+  if (!where_part.empty()) {
+    auto cond_tokens = tokenize(where_part);
+    auto cond_ast = parse_expression(cond_tokens);
+    condition_cuda = cond_ast->to_cuda_expr();
+  }
+
+  auto tokens = tokenize(user_query);
+  std::cout << "\nTokenized Expression:\n";
+  for (auto &tok : tokens) {
+    std::cout << "  ["
+              << (tok.type == TokenType::Identifier ? "ID"
+                  : tok.type == TokenType::Number   ? "NUM"
+                  : tok.type == TokenType::Operator ? "OP"
+                                                    : "END")
+              << "] " << tok.value << "\n";
+  }
+
+  // parse
+  auto ast = parse_expression(tokens);
+  std::cout << "\nParsed Expression (CUDA):\n";
+
+  std::string cuda_expr = ast->to_cuda_expr();
+  std::cout << cuda_expr << "\n";
+
+  // compile
+  std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
+  jit_compile_and_launch(expr_cuda, condition_cuda, table.d_price,
+                         table.d_quantity, d_jit_output, table.num_rows, 0);
+
+  float *h_jit_output = new float[table.num_rows];
+  cudaMemcpy(h_jit_output, d_jit_output, sizeof(float) * table.num_rows,
+             cudaMemcpyDeviceToHost);
+  for (int i = 0; i < table.num_rows; ++i) {
+    std::cout << "JIT Result[" << i << "] = " << h_jit_output[i] << "\n";
+  }
+
+  std::cout << "\n[ Multi-GPU JIT Example ]\n";
+  run_multi_gpu_jit(expr_cuda, condition_cuda);
+
+  delete[] h_jit_output;
 
   delete[] h_revenue_multi;
   delete[] h_adjusted_price;
