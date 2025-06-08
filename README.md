@@ -118,7 +118,17 @@ You can then invoke the function in a query:
 ### Python API
 
 You can also use WarpDB directly from Python if `pybind11` is available.
-The bindings are compiled during the CMake build when `pybind11` is detected:
+Install the bindings with `pip`, which will compile the `pywarpdb` extension:
+
+```bash
+pip install .
+```
+
+You can also build a wheel for redistribution:
+
+```bash
+pip wheel . -w dist
+```
 
 ```python
 import pywarpdb
