@@ -240,6 +240,36 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
     QueryAST ast = parse_query(tokens);
 
+    std::unordered_set<std::string> cols;
+    for (const auto &c : table_.columns) cols.insert(c.name);
+
+    auto validate_ctx = [&](const ASTNode *node, const std::string &ctx) {
+        if (!node) return;
+        try {
+            validate_ast(node, cols);
+        } catch (const std::exception &e) {
+            throw std::runtime_error(ctx + ": " + e.what());
+        }
+    };
+
+    for (const auto &expr : ast.select_list) {
+        validate_ctx(expr.get(), "SELECT clause");
+    }
+    if (ast.join) {
+        validate_ctx(ast.join->condition.get(), "JOIN condition");
+    }
+    if (ast.where) {
+        validate_ctx(ast.where.value().get(), "WHERE clause");
+    }
+    if (ast.group_by) {
+        for (const auto &k : ast.group_by->keys) {
+            validate_ctx(k.get(), "GROUP BY");
+        }
+    }
+    if (ast.order_by) {
+        validate_ctx(ast.order_by->expr.get(), "ORDER BY");
+    }
+
     std::vector<Row> rows;
     rows.reserve(host_table_.num_rows());
     for (int i = 0; i < host_table_.num_rows(); ++i) {

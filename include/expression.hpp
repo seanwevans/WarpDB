@@ -9,6 +9,8 @@ enum class TokenType { Identifier, Number, Operator, Keyword, End };
 struct Token {
   TokenType type;
   std::string value;
+  int line = 1;
+  int column = 1;
 };
 
 std::vector<Token> tokenize(const std::string &input);
