@@ -25,8 +25,8 @@ std::vector<Token> tokenize(const std::string &input) {
         c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
       static const std::unordered_set<std::string> keywords = {
           "SELECT",   "FROM",  "WHERE", "JOIN", "ON",  "GROUP",
-          "BY",       "ORDER", "ASC",  "DESC", "SUM", "AVG",
-          "COUNT",    "MIN",   "MAX",  "OVER", "PARTITION"};
+          "BY",       "ORDER", "ASC",  "DESC", "LIMIT", "SUM",
+          "AVG",      "COUNT", "MIN",  "MAX",  "OVER", "PARTITION"};
       if (keywords.count(upper)) {
         tokens.push_back({TokenType::Keyword, upper});
       } else {
@@ -327,6 +327,16 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
       pos++;
     }
     query.order_by = std::move(ob);
+  }
+
+  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+      tokens[pos].value == "LIMIT") {
+    pos++;
+    if (pos >= tokens.size() || tokens[pos].type != TokenType::Number)
+      throw std::runtime_error("Expected numeric value after LIMIT");
+    LimitClause lc{std::stoi(tokens[pos].value)};
+    pos++;
+    query.limit = lc;
   }
 
   return query;

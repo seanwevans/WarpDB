@@ -95,6 +95,10 @@ struct OrderByClause {
   bool ascending;
 };
 
+struct LimitClause {
+  int count;
+};
+
 struct WindowFunctionNode : public ASTNode {
   AggregationType agg;
   ASTNodePtr expr;
@@ -122,6 +126,7 @@ struct QueryAST {
   std::optional<ASTNodePtr> where;
   std::optional<GroupByClause> group_by;
   std::optional<OrderByClause> order_by;
+  std::optional<LimitClause> limit;
 };
 
 QueryAST parse_query(const std::vector<Token> &tokens);

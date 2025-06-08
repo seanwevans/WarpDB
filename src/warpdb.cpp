@@ -236,6 +236,11 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         for (const auto &kv : keyed) result.push_back(kv.second);
     }
 
+    if (ast.limit) {
+        if (static_cast<size_t>(ast.limit->count) < result.size())
+            result.resize(ast.limit->count);
+    }
+
     return result;
 }
 
