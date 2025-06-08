@@ -71,6 +71,13 @@ add_executable(query_parser_test
 
 add_test(NAME query_parser_test COMMAND query_parser_test)
 
+add_executable(parsing_error_tests
+    tests/parsing_error_tests.cpp
+    src/expression.cpp
+)
+
+add_test(NAME parsing_error_tests COMMAND parsing_error_tests)
+
 
 add_executable(sql_features_test
     tests/sql_features_test.cpp
