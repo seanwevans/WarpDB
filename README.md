@@ -198,12 +198,12 @@ WarpDB implements several CUDA kernels:
 
 - Currently supports a limited subset of SQL functionality
 - Only supports simple CSV files with basic data types
-- No support for joins, aggregations, or complex SQL features yet
+- Basic support for joins, aggregations, and ordering
 - Limited error handling for malformed queries
 
 ## Future Improvements
 
-- Support for more SQL features (JOINs, GROUP BY, ORDER BY)
+- Extend SQL support beyond the basic JOIN/GROUP BY/ORDER BY implementation
 - Better error handling and query validation
 - Support for more data sources and formats
 - Query optimization based on data statistics
