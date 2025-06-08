@@ -5,6 +5,8 @@
 #include <nvrtc.h>
 #include <stdexcept>
 #include <vector>
+#include <fstream>
+#include <sstream>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -26,8 +28,14 @@
   } while (0)
 
 void jit_compile_and_launch(const std::string &expr_code,
+
                             const std::string &condition_code,
                             const Table &table, float *d_output) {
+
+                            const std::string &condition_code, float *d_price,
+                            int *d_quantity, float *d_output, int N,
+                            int device_id) {
+
   std::string body;
   if (!condition_code.empty()) {
     body = "if (" + condition_code + ") {\n    output[idx] = " + expr_code +
@@ -35,6 +43,7 @@ void jit_compile_and_launch(const std::string &expr_code,
   } else {
     body = "output[idx] = " + expr_code + ";";
   }
+
 
   std::string param_list;
   for (size_t i = 0; i < table.columns.size(); ++i) {
@@ -51,6 +60,26 @@ void jit_compile_and_launch(const std::string &expr_code,
   kernel += "    if (idx >= N) return;\n";
   kernel += "    " + body + "\n";
   kernel += "}";
+
+  std::string custom_code;
+  {
+    std::ifstream in("custom.cu");
+    if (in) {
+      std::stringstream ss;
+      ss << in.rdbuf();
+      custom_code = ss.str();
+    }
+  }
+
+  std::string kernel = custom_code + R"(
+    extern "C" __global__
+    void user_kernel(float* price, int* quantity, float* output, int N) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= N) return;
+    )" + body + R"(
+    }
+    )";
+
 
   // Compile
   // RAII wrapper to destroy the NVRTC program in all code paths.
@@ -95,7 +124,7 @@ void jit_compile_and_launch(const std::string &expr_code,
   CUmodule module;
   CUfunction kernel_func;
   CU_CHECK(cuInit(0));
-  CU_CHECK(cuDeviceGet(&cuDevice, 0));
+  CU_CHECK(cuDeviceGet(&cuDevice, device_id));
   CU_CHECK(cuCtxCreate(&context, 0, cuDevice));
   CU_CHECK(cuModuleLoadDataEx(&module, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module, "user_kernel"));
