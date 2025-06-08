@@ -56,6 +56,18 @@ make
 ./warpdb "query_expression [WHERE condition]"
 ```
 
+### Python API
+
+You can also use WarpDB directly from Python if `pybind11` is available:
+
+```python
+import pywarpdb
+
+db = pywarpdb.WarpDB("data/test.csv")
+result = db.query("price * quantity WHERE price > 10")
+print(result)
+```
+
 ### Example Queries
 
 ```bash
