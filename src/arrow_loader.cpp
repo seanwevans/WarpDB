@@ -66,7 +66,6 @@ ArrowTable load_csv_arrow(const std::string &filepath) {
 
     return {d_price, d_quantity, num_rows};
 }
-#endif
 
 
 namespace {
@@ -140,3 +139,5 @@ Table load_orc_to_gpu(const std::string &filepath) {
   ARROW_ASSIGN_OR_RAISE(table, arrow::adapters::orc::ORCFileReader::Read(*infile));
   return table_from_arrow(table);
 }
+
+#endif // USE_ARROW
