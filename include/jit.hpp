@@ -1,12 +1,13 @@
 #pragma once
 #include <string>
+#include "csv_loader.hpp"
 
 // Compile the given expression and optional condition using NVRTC and launch
 // the generated kernel. Columns are provided via the Table descriptor.
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
-                            float *d_price, int *d_quantity,
-                            float *d_output, int N, int device_id = 0);
+                            const Table &table,
+                            float *d_output, int device_id = 0);
 
 // JIT compile a kernel that groups rows by `key_expr_code` and sums
 // `val_expr_code`. The number of unique groups is written to d_count and

@@ -11,14 +11,12 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
         Table dtab = upload_to_gpu(host);
         float *d_out;
         cudaMalloc(&d_out, sizeof(float) * host.num_rows());
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price,
-                               dtab.d_quantity, d_out, host.num_rows(), 0);
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out, 0);
         std::vector<float> result(host.num_rows());
         cudaMemcpy(result.data(), d_out, sizeof(float) * host.num_rows(),
                    cudaMemcpyDeviceToHost);
         cudaFree(d_out);
-        cudaFree(dtab.d_price);
-        cudaFree(dtab.d_quantity);
+        for (auto &c : dtab.columns) cudaFree(c.device_ptr);
         return result;
     }
 
@@ -34,24 +32,31 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
         int local_N = end - start;
 
         HostTable sub;
-        sub.price.assign(host.price.begin() + start, host.price.begin() + end);
-        sub.quantity.assign(host.quantity.begin() + start,
-                            host.quantity.begin() + end);
+        sub.columns.resize(host.columns.size());
+        for (size_t i=0;i<host.columns.size();++i) {
+            sub.columns[i].name = host.columns[i].name;
+            sub.columns[i].type = host.columns[i].type;
+            if (host.columns[i].type == DataType::Float32) {
+                auto &vec = std::get<std::vector<float>>(host.columns[i].data);
+                sub.columns[i].data = std::vector<float>(vec.begin()+start, vec.begin()+end);
+            } else if (host.columns[i].type == DataType::Int32) {
+                auto &vec = std::get<std::vector<int32_t>>(host.columns[i].data);
+                sub.columns[i].data = std::vector<int32_t>(vec.begin()+start, vec.begin()+end);
+            }
+        }
         cudaSetDevice(dev);
         Table dtab = upload_to_gpu(sub);
 
         float *d_out;
         cudaMalloc(&d_out, sizeof(float) * local_N);
 
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price,
-                               dtab.d_quantity, d_out, local_N, dev);
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out, dev);
 
         cudaMemcpy(results.data() + start, d_out, sizeof(float) * local_N,
                    cudaMemcpyDeviceToHost);
 
         cudaFree(d_out);
-        cudaFree(dtab.d_price);
-        cudaFree(dtab.d_quantity);
+        for (auto &c : dtab.columns) cudaFree(c.device_ptr);
     }
 
     return results;

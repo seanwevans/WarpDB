@@ -360,7 +360,9 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
 
         std::string val_expr = agg->expr->to_cuda_expr();
         std::string key_expr = ast.group_by->keys[0]->to_cuda_expr();
-        jit_group_sum(val_expr, key_expr, table_.d_price, table_.d_quantity,
+        float *d_price = table_.get_column_ptr<float>("price");
+        int *d_quantity = table_.get_column_ptr<int>("quantity");
+        jit_group_sum(val_expr, key_expr, d_price, d_quantity,
                       d_vals, d_keys, d_count, table_.num_rows);
 
         int h_count = 0;
@@ -445,12 +447,12 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         float *d_out;
         cudaMalloc(&d_out, sizeof(float)*table_.num_rows);
         std::string expr_code = ast.select_list[0]->to_cuda_expr();
-        jit_compile_and_launch(expr_code, "", table_.d_price, table_.d_quantity,
-                               d_out, table_.num_rows);
+        jit_compile_and_launch(expr_code, "", table_, d_out);
 
 
         if (ast.order_by && expr_code == ast.order_by->expr->to_cuda_expr()) {
             jit_sort_float(d_out, table_.num_rows, ast.order_by->ascending);
+        }
 
         for (int idx : rows) {
             result.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));

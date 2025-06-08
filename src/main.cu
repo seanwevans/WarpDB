@@ -194,23 +194,10 @@ int main(int argc, char **argv) {
   std::cout << "Allocated space\n";
 
 
-  print_first_few<<<1, 4>>>(
-#ifdef USE_ARROW
-      reinterpret_cast<float *>(table.d_price->mutable_data()),
-      reinterpret_cast<int *>(table.d_quantity->mutable_data()),
-#else
-      table.d_price, table.d_quantity,
-#endif
-      table.num_rows);
+  print_first_few<<<1, 4>>>(d_price, d_quantity, table.num_rows);
   cudaDeviceSynchronize();
 
-  filter_price_gt<<<blocks, threads>>>(
-#ifdef USE_ARROW
-                                       reinterpret_cast<float *>(table.d_price->mutable_data()),
-                                       reinterpret_cast<int *>(table.d_quantity->mutable_data()),
-#else
-                                       table.d_price, table.d_quantity,
-#endif
+  filter_price_gt<<<blocks, threads>>>(d_price, d_quantity,
                                        d_price_filtered, d_quantity_filtered,
                                        d_count, table.num_rows, threshold);
 
@@ -239,13 +226,7 @@ int main(int argc, char **argv) {
 
   std::cout << "\nRunning SELECT projection:\n";
 
-  project_columns<<<blocks, threads>>>(
-#ifdef USE_ARROW
-      reinterpret_cast<float *>(table.d_price->mutable_data()),
-      reinterpret_cast<int *>(table.d_quantity->mutable_data()),
-#else
-      table.d_price, table.d_quantity,
-#endif
+  project_columns<<<blocks, threads>>>(d_price, d_quantity,
       d_selected_price, d_selected_quantity, d_select_count, table.num_rows,
       select_price, select_quantity);
 
@@ -274,13 +255,7 @@ int main(int argc, char **argv) {
   std::cout << "\nRunning SELECT revenue (price * quantity) with WHERE price > "
                "threshold:\n";
 
-  project_revenue<<<blocks, threads>>>(
-#ifdef USE_ARROW
-      reinterpret_cast<float *>(table.d_price->mutable_data()),
-      reinterpret_cast<int *>(table.d_quantity->mutable_data()),
-#else
-      table.d_price, table.d_quantity,
-#endif
+  project_revenue<<<blocks, threads>>>(d_price, d_quantity,
       d_revenue, d_revenue_count, table.num_rows, threshold);
 
   cudaDeviceSynchronize();
@@ -299,13 +274,7 @@ int main(int argc, char **argv) {
 
   std::cout << "\nRunning SELECT revenue and adjusted_price:\n";
   project_revenue_and_adjusted<<<blocks, threads>>>(
-
-#ifdef USE_ARROW
-      reinterpret_cast<float *>(table.d_price->mutable_data()),
-      reinterpret_cast<int *>(table.d_quantity->mutable_data()),
-#else
-      table.d_price, table.d_quantity,
-#endif
+      d_price, d_quantity,
       d_revenue_multi, d_adjusted_price, d_multi_count, table.num_rows,
       threshold);
 
@@ -360,13 +329,7 @@ int main(int argc, char **argv) {
 
 
   jit_compile_and_launch(expr_cuda, condition_cuda,
-#ifdef USE_ARROW
-                         reinterpret_cast<float *>(table.d_price->mutable_data()),
-                         reinterpret_cast<int *>(table.d_quantity->mutable_data()),
-#else
-                         table.d_price, table.d_quantity,
-#endif
-                         d_jit_output, table.num_rows);
+                         table, d_jit_output);
 
   float *h_jit_output = new float[table.num_rows];
   cudaMemcpy(h_jit_output, d_jit_output, sizeof(float) * table.num_rows,
@@ -414,13 +377,9 @@ int main(int argc, char **argv) {
   cudaFree(d_quantity_filtered);
   cudaFree(d_count);
 
-#ifndef USE_ARROW
-  cudaFree(table.d_price);
-  cudaFree(table.d_quantity);
   for (auto &col : table.columns) {
     cudaFree(col.device_ptr);
   }
-#endif
 
   return 0;
 }
