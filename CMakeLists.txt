@@ -31,6 +31,8 @@ set(WARPDB_SRC
 
 if(Arrow_FOUND)
     list(APPEND WARPDB_SRC src/arrow_loader.cpp)
+else()
+    list(APPEND WARPDB_SRC src/arrow_loader_stub.cpp)
 endif()
 
 add_executable(warpdb ${WARPDB_SRC})
@@ -41,9 +43,9 @@ set_target_properties(warpdb PROPERTIES
 
 
 if(Arrow_FOUND)
-    target_link_libraries(warpdb PRIVATE CUDA::nvrtc CUDA::cuda_driver ${Arrow_LIBRARIES})
+    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver ${Arrow_LIBRARIES})
 else()
-    target_link_libraries(warpdb PRIVATE CUDA::nvrtc CUDA::cuda_driver)
+    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 endif()
 
 add_executable(expression_test
@@ -69,13 +71,11 @@ add_executable(query_parser_test
 
 add_test(NAME query_parser_test COMMAND query_parser_test)
 
+
 add_executable(sql_features_test
     tests/sql_features_test.cpp
-    src/warpdb.cpp
-    src/csv_loader.cpp
-    src/expression.cpp
-    src/jit.cpp
 )
+target_link_libraries(sql_features_test PRIVATE warpdb_lib)
 
 add_test(NAME sql_features_test COMMAND sql_features_test)
 
@@ -83,7 +83,7 @@ add_executable(jit_error_test
     tests/jit_error_test.cpp
     src/jit.cpp
 )
-target_link_libraries(jit_error_test PRIVATE CUDA::nvrtc CUDA::cuda_driver)
+target_link_libraries(jit_error_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_error_test COMMAND jit_error_test)
 
 add_executable(jit_arch_test
@@ -101,8 +101,13 @@ add_library(warpdb_lib STATIC
     src/jit.cpp
     src/arrow_utils.cpp
 )
+if(Arrow_FOUND)
+    target_sources(warpdb_lib PRIVATE src/arrow_loader.cpp)
+else()
+    target_sources(warpdb_lib PRIVATE src/arrow_loader_stub.cpp)
+endif()
 set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)
+target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 
 find_package(pybind11 CONFIG QUIET)
 if(pybind11_FOUND)

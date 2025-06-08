@@ -393,8 +393,8 @@ int main(int argc, char **argv) {
   auto ast = parse_expression(tokens);
   std::cout << "\nParsed Expression (CUDA):\n";
 
-  std::string cuda_expr = ast->to_cuda_expr();
-  std::cout << cuda_expr << "\n";
+  std::string expr_cuda = ast->to_cuda_expr();
+  std::cout << expr_cuda << "\n";
 
   // compile
   std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
