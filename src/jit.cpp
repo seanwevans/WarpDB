@@ -4,6 +4,9 @@
 #include <iostream>
 #include <nvrtc.h>
 #include <stdexcept>
+#include <vector>
+#include <fstream>
+#include <sstream>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -25,8 +28,14 @@
   } while (0)
 
 void jit_compile_and_launch(const std::string &expr_code,
+
+                            const std::string &condition_code,
+                            const Table &table, float *d_output) {
+
                             const std::string &condition_code, float *d_price,
-                            int *d_quantity, float *d_output, int N) {
+                            int *d_quantity, float *d_output, int N,
+                            int device_id) {
+
   std::string body;
   if (!condition_code.empty()) {
     body = "if (" + condition_code + ") {\n    output[idx] = " + expr_code +
@@ -35,7 +44,34 @@ void jit_compile_and_launch(const std::string &expr_code,
     body = "output[idx] = " + expr_code + ";";
   }
 
-  std::string kernel = R"(
+
+  std::string param_list;
+  for (size_t i = 0; i < table.columns.size(); ++i) {
+    const auto &col = table.columns[i];
+    param_list += (col.type == DataType::Float32 ? "float* " : "int* ");
+    param_list += col.name;
+    param_list += ", ";
+  }
+  param_list += "float* output, int N";
+
+  std::string kernel = "extern \"C\" __global__\n";
+  kernel += "void user_kernel(" + param_list + ") {\n";
+  kernel += "    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n";
+  kernel += "    if (idx >= N) return;\n";
+  kernel += "    " + body + "\n";
+  kernel += "}";
+
+  std::string custom_code;
+  {
+    std::ifstream in("custom.cu");
+    if (in) {
+      std::stringstream ss;
+      ss << in.rdbuf();
+      custom_code = ss.str();
+    }
+  }
+
+  std::string kernel = custom_code + R"(
     extern "C" __global__
     void user_kernel(float* price, int* quantity, float* output, int N) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -43,6 +79,7 @@ void jit_compile_and_launch(const std::string &expr_code,
     )" + body + R"(
     }
     )";
+
 
   // Compile
   // RAII wrapper to destroy the NVRTC program in all code paths.
@@ -87,17 +124,24 @@ void jit_compile_and_launch(const std::string &expr_code,
   CUmodule module;
   CUfunction kernel_func;
   CU_CHECK(cuInit(0));
-  CU_CHECK(cuDeviceGet(&cuDevice, 0));
+  CU_CHECK(cuDeviceGet(&cuDevice, device_id));
   CU_CHECK(cuCtxCreate(&context, 0, cuDevice));
   CU_CHECK(cuModuleLoadDataEx(&module, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module, "user_kernel"));
 
   // Launch
-  void *args[] = {&d_price, &d_quantity, &d_output, &N};
+  std::vector<void *> args;
+  for (const auto &col : table.columns) {
+    args.push_back(const_cast<void *>(&col.device_ptr));
+  }
+  args.push_back(&d_output);
+  int N = table.num_rows;
+  args.push_back(&N);
+
   int threads = 128;
   int blocks = (N + threads - 1) / threads;
-  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0, args,
-                          nullptr));
+  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
+                          args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
 
   // Cleanup
