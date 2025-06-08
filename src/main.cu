@@ -429,11 +429,11 @@ int main(int argc, char **argv) {
   schema.release(&schema);
 
   std::cout << "\n[ Multi-GPU JIT Example ]\n";
+
   run_multi_gpu_jit(csv_path, cuda_expr, condition_cuda);
 
   std::cout << "\n[ Large Multi-GPU Example ]\n";
   run_multi_gpu_jit_large(csv_path, cuda_expr, condition_cuda, 1024);
-
 
   delete[] h_jit_output;
 
