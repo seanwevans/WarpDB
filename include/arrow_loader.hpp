@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 #include <stdexcept>
-#ifdef USE_ARROW
+#if defined(USE_ARROW)
 #include <arrow/api.h>
 #include <arrow/cuda/api.h>
 #endif
@@ -16,8 +16,12 @@ struct ArrowTable {
 #endif
 };
 
-#ifdef USE_ARROW
+#if defined(USE_ARROW)
 ArrowTable load_csv_arrow(const std::string &filepath);
+Table load_parquet_to_gpu(const std::string &filepath);
+Table load_arrow_to_gpu(const std::string &filepath);
+Table load_orc_to_gpu(const std::string &filepath);
+#elif defined(USE_SIMPLE_READERS)
 Table load_parquet_to_gpu(const std::string &filepath);
 Table load_arrow_to_gpu(const std::string &filepath);
 Table load_orc_to_gpu(const std::string &filepath);

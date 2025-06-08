@@ -110,7 +110,7 @@ WarpDB::WarpDB(const std::string &filepath) {
 
         host_table_ = load_json_to_host(filepath);
 
-#ifdef USE_ARROW
+#if defined(USE_ARROW) || defined(USE_SIMPLE_READERS)
 
     } else if (ext == "parquet") {
         table_ = load_parquet_to_gpu(filepath);

@@ -246,6 +246,7 @@ WarpDB implements several CUDA kernels:
 The project has recently gained several improvements:
 
 - Optional Apache Arrow integration can be enabled with `USE_ARROW`.
+- When Arrow is not available, simplified Parquet and ORC readers can be enabled with `USE_SIMPLE_READERS`.
 - Basic query optimization uses column statistics for simple filter pushdown.
 - RAII wrappers manage CUDA contexts and modules to avoid resource leaks.
 - Helper functions demonstrate streaming across multiple GPUs.

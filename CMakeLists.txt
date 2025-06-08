@@ -10,6 +10,8 @@ find_package(CUDAToolkit REQUIRED)
 
 find_package(Arrow QUIET COMPONENTS cuda)
 
+option(USE_SIMPLE_READERS "Enable simplified Parquet/ORC readers" OFF)
+
 if(Arrow_FOUND)
     message(STATUS "Found Apache Arrow: ${Arrow_VERSION}")
     add_definitions(-DUSE_ARROW)
@@ -31,6 +33,9 @@ set(WARPDB_SRC
 
 if(Arrow_FOUND)
     list(APPEND WARPDB_SRC src/arrow_loader.cpp)
+elseif(USE_SIMPLE_READERS)
+    list(APPEND WARPDB_SRC src/arrow_loader.cpp)
+    add_definitions(-DUSE_SIMPLE_READERS)
 else()
     list(APPEND WARPDB_SRC src/arrow_loader_stub.cpp)
 endif()
@@ -44,6 +49,8 @@ set_target_properties(warpdb PROPERTIES
 
 if(Arrow_FOUND)
     target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver ${Arrow_LIBRARIES})
+elseif(USE_SIMPLE_READERS)
+    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver parquet orc)
 else()
     target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 endif()
@@ -109,6 +116,10 @@ target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)
 
 if(Arrow_FOUND)
     target_sources(warpdb_lib PRIVATE src/arrow_loader.cpp)
+elseif(USE_SIMPLE_READERS)
+    target_sources(warpdb_lib PRIVATE src/arrow_loader.cpp)
+    target_link_libraries(warpdb_lib PUBLIC parquet orc)
+    add_definitions(-DUSE_SIMPLE_READERS)
 else()
     target_sources(warpdb_lib PRIVATE src/arrow_loader_stub.cpp)
 endif()
