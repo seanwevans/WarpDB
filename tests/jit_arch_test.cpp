@@ -13,9 +13,14 @@ int main() {
     cudaMemcpy(d_price, &h_price, sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_quantity, &h_quantity, sizeof(int), cudaMemcpyHostToDevice);
 
+    Table table;
+    table.num_rows = 1;
+    table.columns.push_back({"price", DataType::Float32, d_price, 1});
+    table.columns.push_back({"quantity", DataType::Int32, d_quantity, 1});
+
     bool threw = false;
     try {
-        jit_compile_and_launch("price", "", d_price, d_quantity, d_output, 1);
+        jit_compile_and_launch("price", "", table, d_output);
     } catch (const std::exception &e) {
         threw = true;
         std::cerr << e.what() << "\n";

@@ -8,7 +8,9 @@
 #endif
 
 
-enum class DataType { Int32, Float32 };
+#include <variant>
+
+enum class DataType { Int32, Int64, Float32, Float64, String };
 
 struct ColumnDesc {
   std::string name;
@@ -32,24 +34,11 @@ struct ColumnStatsInt {
 struct TableStats {
   ColumnStatsFloat price;
   ColumnStatsInt quantity;
-
 };
 
 struct Table {
-
-#ifdef USE_ARROW
-  std::shared_ptr<arrow::cuda::CudaBuffer> d_price; // Device buffers
-  std::shared_ptr<arrow::cuda::CudaBuffer> d_quantity;
-#else
-  float *d_price; // Device pointers
-  int *d_quantity;
-#endif
-
   std::vector<ColumnDesc> columns;
-
-  int num_rows;
-
-  TableStats stats; // basic column statistics
+  int num_rows = 0;
 
   template <typename T>
   T *get_column_ptr(const std::string &name) const {
@@ -64,15 +53,32 @@ struct Table {
 Table load_csv_to_gpu(const std::string &filepath,
                       const std::vector<DataType> &schema = {});
 
-struct HostTable {
-  std::vector<float> price;
-  std::vector<int> quantity;
-  int num_rows() const { return static_cast<int>(price.size()); }
+using ColumnData = std::variant<std::vector<int32_t>, std::vector<int64_t>,
+                                std::vector<float>, std::vector<double>,
+                                std::vector<std::string>>;
+
+struct HostColumn {
+  std::string name;
+  DataType type;
+  ColumnData data;
 };
 
-HostTable load_csv_to_host(const std::string &filepath);
-Table upload_to_gpu(const HostTable &table,
-                    const std::vector<DataType> &schema);
+struct HostTable {
+  std::vector<HostColumn> columns;
+  int num_rows() const {
+    if (columns.empty()) return 0;
+    return std::visit([](auto &&v) { return static_cast<int>(v.size()); },
+                      columns[0].data);
+  }
+  const HostColumn *get_column(const std::string &name) const {
+    for (const auto &c : columns)
+      if (c.name == name) return &c;
+    return nullptr;
+  }
+};
+
+HostTable load_csv_to_host(const std::string &filepath,
+                           const std::vector<DataType> &schema = {});
 Table upload_to_gpu(const HostTable &table);
 
 // Load at most `max_rows` CSV rows from an open input stream. `finished`

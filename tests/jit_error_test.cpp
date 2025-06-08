@@ -8,10 +8,15 @@ int main() {
     int *quantity; cudaMalloc(&quantity, sizeof(int));
     float *output; cudaMalloc(&output, sizeof(float));
 
+    Table table;
+    table.num_rows = 1;
+    table.columns.push_back({"price", DataType::Float32, price, 1});
+    table.columns.push_back({"quantity", DataType::Int32, quantity, 1});
+
     bool threw = false;
     try {
         // invalid code will fail to compile
-        jit_compile_and_launch("invalid@", "", price, quantity, output, 1);
+        jit_compile_and_launch("invalid@", "", table, output);
     } catch (const std::exception&) {
         threw = true;
     }
@@ -20,7 +25,7 @@ int main() {
     // A second valid invocation should still succeed if resources were cleaned up
     threw = false;
     try {
-        jit_compile_and_launch("price + 1", "", price, quantity, output, 1);
+        jit_compile_and_launch("price + 1", "", table, output);
     } catch (const std::exception& e) {
         threw = true;
         std::cerr << e.what() << "\n";

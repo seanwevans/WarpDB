@@ -89,11 +89,12 @@ target_link_libraries(sql_features_test PRIVATE warpdb_lib)
 
 add_test(NAME sql_features_test COMMAND sql_features_test)
 
-add_executable(having_distinct_test
-    tests/having_distinct_test.cpp
+add_executable(extended_types_test
+    tests/extended_types_test.cpp
 )
-target_link_libraries(having_distinct_test PRIVATE warpdb_lib)
-add_test(NAME having_distinct_test COMMAND having_distinct_test)
+target_link_libraries(extended_types_test PRIVATE warpdb_lib)
+add_test(NAME extended_types_test COMMAND extended_types_test)
+
 
 add_executable(jit_error_test
     tests/jit_error_test.cpp
