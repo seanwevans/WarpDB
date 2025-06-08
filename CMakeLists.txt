@@ -102,3 +102,9 @@ if(pybind11_FOUND)
     pybind11_add_module(pywarpdb bindings/python/pywarpdb.cpp)
     target_link_libraries(pywarpdb PRIVATE warpdb_lib)
 endif()
+
+# Test building without Apache Arrow available
+add_test(
+    NAME no_arrow_build
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/build_no_arrow.sh
+)
