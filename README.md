@@ -80,11 +80,18 @@ make
 When `pybind11` is available a `pywarpdb` Python module is generated in the
 build directory alongside the C++ binaries.
 
+## Testing
+
+Run `ctest` from the `build` directory to execute the project's tests. Some
+tests rely on CUDA and optional libraries like Arrow or pybind11.
+
 ## Usage
 
 ```bash
-./warpdb "query_expression [WHERE condition]"
+./warpdb "query_expression [WHERE condition]" [data_file]
 ```
+
+If `data_file` is omitted, WarpDB loads `data/test.csv` by default.
 
 
 ### Custom CUDA Functions
@@ -149,9 +156,10 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 
 WarpDB includes helpers `run_multi_gpu_jit` and `run_multi_gpu_jit_large`
 demonstrating how to split the input table across available GPUs and execute the
-same JIT-compiled kernel on each device. The `run_multi_gpu_jit_large` variant
-streams the CSV file in chunks, enabling processing of datasets larger than a
-single GPU's memory. Results are aggregated back on the host.
+same JIT-compiled kernel on each device. Both functions now take the CSV file
+path as their first argument. The `run_multi_gpu_jit_large` variant streams the
+CSV file in chunks, enabling processing of datasets larger than a single GPU's
+memory. Results are aggregated back on the host.
 
 ## Project Structure
 

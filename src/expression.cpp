@@ -26,7 +26,8 @@ std::vector<Token> tokenize(const std::string &input) {
       static const std::unordered_set<std::string> keywords = {
           "SELECT",   "FROM",  "WHERE", "JOIN", "ON",  "GROUP",
           "BY",       "ORDER", "ASC",  "DESC", "SUM", "AVG",
-          "COUNT",    "MIN",   "MAX",  "OVER", "PARTITION"};
+          "COUNT",    "MIN",   "MAX",  "OVER", "PARTITION",
+          "AND",      "OR"};
       if (keywords.count(upper)) {
         tokens.push_back({TokenType::Keyword, upper});
       } else {
@@ -84,6 +85,8 @@ bool match(const std::string &op) {
 // Forward declarations
 ASTNodePtr parse_term();
 ASTNodePtr parse_factor();
+ASTNodePtr parse_logical_or_internal();
+ASTNodePtr parse_logical_and_internal();
 
 // Parses: expr = term ( ("+"|"-") term )*
 ASTNodePtr parse_expression_internal() {
@@ -106,6 +109,30 @@ ASTNodePtr parse_comparison() {
     ASTNodePtr right = parse_expression_internal();
     node =
         std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
+  }
+  return node;
+}
+
+// Parses: logical_and = comparison (AND comparison)*
+ASTNodePtr parse_logical_and_internal() {
+  ASTNodePtr node = parse_comparison();
+  while (peek().type == TokenType::Keyword && peek().value == "AND") {
+    advance();
+    ASTNodePtr right = parse_comparison();
+    node = std::make_unique<BinaryOpNode>("&&", std::move(node),
+                                          std::move(right));
+  }
+  return node;
+}
+
+// Parses: logical_or = logical_and (OR logical_and)*
+ASTNodePtr parse_logical_or_internal() {
+  ASTNodePtr node = parse_logical_and_internal();
+  while (peek().type == TokenType::Keyword && peek().value == "OR") {
+    advance();
+    ASTNodePtr right = parse_logical_and_internal();
+    node = std::make_unique<BinaryOpNode>("||", std::move(node),
+                                          std::move(right));
   }
   return node;
 }
@@ -158,12 +185,32 @@ ASTNodePtr parse_expression(const std::vector<Token> &tokens) {
   current = 0;
   toks = tokens;
 
-  ASTNodePtr node = parse_comparison();
+  ASTNodePtr node = parse_logical_or_internal();
   if (peek().type != TokenType::End) {
     throw std::runtime_error("Unexpected tokens remaining: " + peek().value);
   }
   return node;
 
+}
+
+ASTNodePtr parse_logical_and(const std::vector<Token> &tokens) {
+  current = 0;
+  toks = tokens;
+  ASTNodePtr node = parse_logical_and_internal();
+  if (peek().type != TokenType::End) {
+    throw std::runtime_error("Unexpected tokens remaining: " + peek().value);
+  }
+  return node;
+}
+
+ASTNodePtr parse_logical_or(const std::vector<Token> &tokens) {
+  current = 0;
+  toks = tokens;
+  ASTNodePtr node = parse_logical_or_internal();
+  if (peek().type != TokenType::End) {
+    throw std::runtime_error("Unexpected tokens remaining: " + peek().value);
+  }
+  return node;
 }
 
 QueryAST parse_query(const std::vector<Token> &tokens) {
