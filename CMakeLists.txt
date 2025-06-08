@@ -21,6 +21,8 @@ include_directories(include)
 set(WARPDB_SRC
     src/main.cu
     src/csv_loader.cpp
+    src/json_loader.cpp
+    src/arrow_loader.cpp
     src/expression.cpp
     src/jit.cpp
     src/arrow_utils.cpp
@@ -70,6 +72,7 @@ add_test(NAME query_parser_test COMMAND query_parser_test)
 add_library(warpdb_lib STATIC
     src/warpdb.cpp
     src/csv_loader.cpp
+    src/json_loader.cpp
     src/expression.cpp
     src/jit.cpp
     src/arrow_utils.cpp
