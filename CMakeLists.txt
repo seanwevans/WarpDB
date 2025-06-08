@@ -28,3 +28,10 @@ add_executable(expression_test
 
 add_test(NAME expression_test COMMAND expression_test)
 
+add_executable(query_parser_test
+    tests/query_parser_test.cpp
+    src/expression.cpp
+)
+
+add_test(NAME query_parser_test COMMAND query_parser_test)
+
