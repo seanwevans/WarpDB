@@ -6,14 +6,10 @@
 
 #include <map>
 #include <utility>
-
-WarpDB::WarpDB(const std::string &csv_path) {
-    host_table_ = load_csv_to_host(csv_path);
-    table_ = upload_to_gpu(host_table_);
-
 #include <stdexcept>
 #include <unordered_set>
 #include <memory>
+
 
 namespace {
 // Recursively validate that all variable references exist in the table.
