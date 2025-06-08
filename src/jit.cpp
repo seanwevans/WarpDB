@@ -45,26 +45,41 @@ void jit_compile_and_launch(const std::string &expr_code,
     )";
 
   // Compile
-  nvrtcProgram prog;
-  NVRTC_CHECK(nvrtcCreateProgram(&prog, kernel.c_str(), "user_kernel.cu", 0,
-                                 nullptr, nullptr));
+  // RAII wrapper to destroy the NVRTC program in all code paths.
+  // Fix: capture compile result and clean up before throwing on failure.
+  struct NvrtcProgramGuard {
+    nvrtcProgram prog{nullptr};
+    ~NvrtcProgramGuard() {
+      if (prog) {
+        nvrtcDestroyProgram(&prog); // ensure destruction on all paths
+      }
+    }
+  } prog;
+
+  NVRTC_CHECK(
+      nvrtcCreateProgram(&prog.prog, kernel.c_str(), "user_kernel.cu", 0,
+                         nullptr, nullptr));
   const char *opts[] = {"--gpu-architecture=compute_70"};
-  nvrtcResult compileResult = nvrtcCompileProgram(prog, 1, opts);
+  nvrtcResult compileResult = nvrtcCompileProgram(prog.prog, 1, opts);
 
   size_t logSize;
-  nvrtcGetProgramLogSize(prog, &logSize);
+  nvrtcGetProgramLogSize(prog.prog, &logSize);
   std::string log(logSize, '\0');
-  nvrtcGetProgramLog(prog, &log[0]);
+  nvrtcGetProgramLog(prog.prog, &log[0]);
   if (compileResult != NVRTC_SUCCESS) {
     std::cerr << "NVRTC Compile Log:\n" << log << "\n";
+    // Explicitly destroy before throwing to avoid leaks
+    nvrtcDestroyProgram(&prog.prog);
+    prog.prog = nullptr;
     throw std::runtime_error("Kernel compilation failed.");
   }
 
   size_t ptxSize;
-  NVRTC_CHECK(nvrtcGetPTXSize(prog, &ptxSize));
+  NVRTC_CHECK(nvrtcGetPTXSize(prog.prog, &ptxSize));
   std::string ptx(ptxSize, '\0');
-  NVRTC_CHECK(nvrtcGetPTX(prog, &ptx[0]));
-  NVRTC_CHECK(nvrtcDestroyProgram(&prog));
+  NVRTC_CHECK(nvrtcGetPTX(prog.prog, &ptx[0]));
+  NVRTC_CHECK(nvrtcDestroyProgram(&prog.prog));
+  prog.prog = nullptr;
 
   // Load to CUDA
   CUdevice cuDevice;
