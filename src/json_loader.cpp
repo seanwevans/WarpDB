@@ -21,11 +21,14 @@ HostTable load_json_to_host(const std::string &filepath) {
   }
 
   HostTable host;
+  host.columns = {
+      {"price", DataType::Float32, std::vector<float>()},
+      {"quantity", DataType::Int32, std::vector<int32_t>()}};
+
   std::string line;
   while (std::getline(file, line)) {
     float price = 0.0f;
     int quantity = 0;
-    // very simple JSON line parser assuming format {"price": X, "quantity": Y}
     size_t p = line.find("\"price\"");
     size_t q = line.find("\"quantity\"");
     if (p == std::string::npos || q == std::string::npos)
@@ -38,8 +41,8 @@ HostTable load_json_to_host(const std::string &filepath) {
     ss1 >> price;
     std::stringstream ss2(line.substr(q + 1));
     ss2 >> quantity;
-    host.price.push_back(price);
-    host.quantity.push_back(quantity);
+    std::get<std::vector<float>>(host.columns[0].data).push_back(price);
+    std::get<std::vector<int32_t>>(host.columns[1].data).push_back(quantity);
   }
   return host;
 }

@@ -27,10 +27,30 @@
     }                                                                          \
   } while (0)
 
+namespace {
+std::string cuda_type(DataType t) {
+  switch (t) {
+  case DataType::Int32:
+    return "int";
+  case DataType::Int64:
+    return "long long";
+  case DataType::Float32:
+    return "float";
+  case DataType::Float64:
+    return "double";
+  case DataType::String:
+    return "void*"; // unsupported
+  }
+  return "void*";
+}
+}
+
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
-                            float *d_price, int *d_quantity,
-                            float *d_output, int N, int device_id) {
+                            const Table &table, float *d_output,
+                            int device_id) {
+
+  int N = table.num_rows;
 
   std::string body;
   if (!condition_code.empty()) {
@@ -52,14 +72,15 @@ void jit_compile_and_launch(const std::string &expr_code,
     }
   }
 
-  std::string kernel = custom_code + R"(
-    extern "C" __global__
-    void user_kernel(float* price, int* quantity, float* output, int N) {
-        int idx = blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx >= N) return;
-    )" + body + R"(
-    }
-    )";
+  std::string params;
+  for (const auto &c : table.columns) {
+    params += cuda_type(c.type) + "* " + c.name + ", ";
+  }
+  params += "float* output, int N";
+
+  std::string kernel = custom_code + "\nextern \"C\" __global__\n    void user_kernel(" +
+                     params + ") {\n        int idx = blockIdx.x * blockDim.x + threadIdx.x;\n        if (idx >= N) return;\n" +
+                     body + "\n    }\n";
 
 
   // Compile
@@ -137,8 +158,9 @@ void jit_compile_and_launch(const std::string &expr_code,
 
   // Launch
   std::vector<void *> args;
-  args.push_back(&d_price);
-  args.push_back(&d_quantity);
+  for (const auto &c : table.columns) {
+    args.push_back(&c.device_ptr);
+  }
   args.push_back(&d_output);
   args.push_back(&N);
 

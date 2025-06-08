@@ -90,24 +90,9 @@ Table table_from_arrow(std::shared_ptr<arrow::Table> table) {
   CUDA_CHECK(cudaMemcpy(d_quantity, h_quantity.data(), sizeof(int) * N, cudaMemcpyHostToDevice));
 
   Table table;
-  table.d_price = d_price;
-  table.d_quantity = d_quantity;
   table.num_rows = static_cast<int>(N);
-  ColumnDesc price_desc{"price", DataType::Float32, d_price, table.num_rows};
-  ColumnDesc qty_desc{"quantity", DataType::Int32, d_quantity, table.num_rows};
-  table.columns = {price_desc, qty_desc};
-  TableStats stats;
-  if (!h_price.empty()) {
-    auto [min_it, max_it] = std::minmax_element(h_price.begin(), h_price.end());
-    stats.price.min = *min_it;
-    stats.price.max = *max_it;
-  }
-  if (!h_quantity.empty()) {
-    auto [min_it, max_it] = std::minmax_element(h_quantity.begin(), h_quantity.end());
-    stats.quantity.min = *min_it;
-    stats.quantity.max = *max_it;
-  }
-  table.stats = stats;
+  table.columns.push_back({"price", DataType::Float32, d_price, table.num_rows});
+  table.columns.push_back({"quantity", DataType::Int32, d_quantity, table.num_rows});
   return table;
 }
 } // namespace

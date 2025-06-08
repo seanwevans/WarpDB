@@ -2,8 +2,7 @@
 #include <string>
 
 // Compile the given expression and optional condition using NVRTC and launch
-// the generated kernel. The kernel operates on the provided price and quantity
-// device arrays and writes the results to d_output.
+// the generated kernel. Columns are provided via the Table descriptor.
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
                             float *d_price, int *d_quantity,
@@ -25,3 +24,4 @@ void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
 // Sort a single float array in-place.
 void jit_sort_float(float *d_vals, int count, bool ascending,
                     int device_id = 0);
+
