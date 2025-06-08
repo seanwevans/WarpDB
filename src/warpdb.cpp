@@ -40,6 +40,61 @@ void validate_ast(const ASTNode *node,
         }
     }
 }
+
+std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
+                                          const std::string &expr_cuda,
+                                          const std::string &cond_cuda) {
+    int device_count = 0;
+    cudaGetDeviceCount(&device_count);
+    if (device_count < 2) {
+        Table dtab = upload_to_gpu(host);
+        float *d_out;
+        cudaMalloc(&d_out, sizeof(float) * host.num_rows());
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price,
+                               dtab.d_quantity, d_out, host.num_rows(), 0);
+        std::vector<float> result(host.num_rows());
+        cudaMemcpy(result.data(), d_out, sizeof(float) * host.num_rows(),
+                   cudaMemcpyDeviceToHost);
+        cudaFree(d_out);
+        cudaFree(dtab.d_price);
+        cudaFree(dtab.d_quantity);
+        return result;
+    }
+
+    int N = host.num_rows();
+    int chunk = (N + device_count - 1) / device_count;
+    std::vector<float> results(N);
+
+    for (int dev = 0; dev < device_count; ++dev) {
+        int start = dev * chunk;
+        int end = std::min(start + chunk, N);
+        if (start >= end)
+            break;
+        int local_N = end - start;
+
+        HostTable sub;
+        sub.price.assign(host.price.begin() + start, host.price.begin() + end);
+        sub.quantity.assign(host.quantity.begin() + start,
+                            host.quantity.begin() + end);
+        cudaSetDevice(dev);
+        Table dtab = upload_to_gpu(sub);
+
+        float *d_out;
+        cudaMalloc(&d_out, sizeof(float) * local_N);
+
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price,
+                               dtab.d_quantity, d_out, local_N, dev);
+
+        cudaMemcpy(results.data() + start, d_out, sizeof(float) * local_N,
+                   cudaMemcpyDeviceToHost);
+
+        cudaFree(d_out);
+        cudaFree(dtab.d_price);
+        cudaFree(dtab.d_quantity);
+    }
+
+    return results;
+}
 } // namespace
 
 WarpDB::WarpDB(const std::string &filepath) {
@@ -49,9 +104,14 @@ WarpDB::WarpDB(const std::string &filepath) {
 
     if (ext == "csv") {
         table_ = load_csv_to_gpu(filepath);
+        host_table_ = load_csv_to_host(filepath);
     } else if (ext == "json") {
         table_ = load_json_to_gpu(filepath);
+
+        host_table_ = load_json_to_host(filepath);
+
 #ifdef USE_ARROW
+
     } else if (ext == "parquet") {
         table_ = load_parquet_to_gpu(filepath);
     } else if (ext == "arrow" || ext == "feather") {
@@ -257,4 +317,88 @@ void WarpDB::query_arrow(const std::string &expr, ArrowArray *out_array,
     export_to_arrow(result.data(), static_cast<int64_t>(result.size()),
                     use_shared_memory, out_array, out_schema);
 
+}
+
+std::vector<float> WarpDB::query_multi_gpu(const std::string &expr) {
+    if (host_table_.num_rows() == 0) {
+        throw std::runtime_error("Host table not available for multi-GPU query");
+    }
+
+    std::string upper = expr;
+    for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    std::string expr_part = expr;
+    std::string where_part;
+    auto where_pos = upper.find("WHERE");
+    if (where_pos != std::string::npos) {
+        expr_part = expr.substr(0, where_pos);
+        where_part = expr.substr(where_pos + 5);
+    }
+
+    std::unique_ptr<ASTNode> expr_ast;
+    auto expr_tokens = tokenize(expr_part);
+    expr_ast = parse_expression(expr_tokens);
+
+    std::unordered_set<std::string> cols{"price", "quantity"};
+    validate_ast(expr_ast.get(), cols);
+
+    std::string expr_cuda = expr_ast->to_cuda_expr();
+
+    std::string condition_cuda;
+    if (!where_part.empty()) {
+        auto cond_tokens = tokenize(where_part);
+        auto cond_ast = parse_expression(cond_tokens);
+        validate_ast(cond_ast.get(), cols);
+        condition_cuda = cond_ast->to_cuda_expr();
+    }
+
+    return run_multi_gpu_jit_host(host_table_, expr_cuda, condition_cuda);
+}
+
+std::vector<float> WarpDB::query_multi_gpu_csv(const std::string &csv_path,
+                                               const std::string &expr,
+                                               int rows_per_chunk) {
+    std::string upper = expr;
+    for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    std::string expr_part = expr;
+    std::string where_part;
+    auto where_pos = upper.find("WHERE");
+    if (where_pos != std::string::npos) {
+        expr_part = expr.substr(0, where_pos);
+        where_part = expr.substr(where_pos + 5);
+    }
+
+    auto expr_tokens = tokenize(expr_part);
+    auto expr_ast = parse_expression(expr_tokens);
+    std::unordered_set<std::string> cols{"price", "quantity"};
+    validate_ast(expr_ast.get(), cols);
+    std::string expr_cuda = expr_ast->to_cuda_expr();
+
+    std::string condition_cuda;
+    if (!where_part.empty()) {
+        auto cond_tokens = tokenize(where_part);
+        auto cond_ast = parse_expression(cond_tokens);
+        validate_ast(cond_ast.get(), cols);
+        condition_cuda = cond_ast->to_cuda_expr();
+    }
+
+    std::ifstream file(csv_path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + csv_path);
+    }
+
+    std::string header;
+    std::getline(file, header);
+
+    bool finished = false;
+    std::vector<float> all_results;
+    while (!finished) {
+        HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished);
+        if (chunk.num_rows() == 0) break;
+        auto part = run_multi_gpu_jit_host(chunk, expr_cuda, condition_cuda);
+        all_results.insert(all_results.end(), part.begin(), part.end());
+    }
+
+    return all_results;
 }
