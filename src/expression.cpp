@@ -17,7 +17,7 @@ std::vector<Token> tokenize(const std::string &input) {
       std::string ident;
       while (i < input.size() &&
              (std::isalnum(static_cast<unsigned char>(input[i])) ||
-              input[i] == '_')) {
+              input[i] == '_' || input[i] == '.')) {
         ident += input[i++];
       }
       std::string upper = ident;
@@ -33,11 +33,13 @@ std::vector<Token> tokenize(const std::string &input) {
         tokens.push_back({TokenType::Identifier, ident});
       }
     } else if (std::isdigit(static_cast<unsigned char>(input[i])) ||
-               input[i] == '.') {
+               (input[i] == '.' && i + 1 < input.size() && std::isdigit(static_cast<unsigned char>(input[i + 1])))) {
       std::string num;
+      bool has_dot = false;
       while (i < input.size() &&
              (std::isdigit(static_cast<unsigned char>(input[i])) ||
-              input[i] == '.')) {
+              (!has_dot && input[i] == '.'))) {
+        if (input[i] == '.') has_dot = true;
         num += input[i++];
       }
       tokens.push_back({TokenType::Number, num});
@@ -51,7 +53,7 @@ std::vector<Token> tokenize(const std::string &input) {
       }
       i++;
       tokens.push_back({TokenType::Operator, op});
-    } else if (std::string("+-*/()<>,").find(input[i]) != std::string::npos) {
+    } else if (std::string("+-*/()<>,.").find(input[i]) != std::string::npos) {
       // Remaining single-character operators
       tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
     } else {
@@ -99,7 +101,7 @@ ASTNodePtr parse_expression_internal() {
 ASTNodePtr parse_comparison() {
   ASTNodePtr node = parse_expression_internal();
   while (match(">") || match("<") || match(">=") || match("<=") ||
-         match("==") || match("!=")) {
+         match("==") || match("!=") || match("=")) {
     std::string op = toks[current - 1].value;
     ASTNodePtr right = parse_expression_internal();
     node =
@@ -263,7 +265,7 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     std::vector<Token> cond(tokens.begin() + start, tokens.begin() + pos);
     cond.push_back({TokenType::End, ""});
     jc.condition = parse_expression(cond);
-    query.join = jc;
+    query.join = std::move(jc);
   }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
@@ -302,7 +304,7 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
           tokens[pos].value == "ORDER")
         break;
     }
-    query.group_by = gb;
+    query.group_by = std::move(gb);
   }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
@@ -324,7 +326,7 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
       ob.ascending = tokens[pos].value == "ASC";
       pos++;
     }
-    query.order_by = ob;
+    query.order_by = std::move(ob);
   }
 
   return query;
