@@ -200,6 +200,7 @@ int main(int argc, char **argv) {
   float *d_revenue;
   float *d_revenue_multi;
   float *d_adjusted_price;
+  float *d_jit_output;
 
   int h_count;
   int h_select_count;
@@ -226,6 +227,7 @@ int main(int argc, char **argv) {
   cudaMalloc(&d_revenue_multi, sizeof(float) * table.num_rows);
   cudaMalloc(&d_adjusted_price, sizeof(float) * table.num_rows);
   cudaMalloc(&d_multi_count, sizeof(int));
+  cudaMalloc(&d_jit_output, sizeof(float) * table.num_rows);
 
   cudaMemset(d_count, 0, sizeof(int));
   cudaMemset(d_select_count, 0, sizeof(int));
@@ -442,6 +444,7 @@ int main(int argc, char **argv) {
   cudaFree(d_revenue_multi);
   cudaFree(d_adjusted_price);
   cudaFree(d_multi_count);
+  cudaFree(d_jit_output);
   cudaFree(d_revenue);
   cudaFree(d_revenue_count);
   cudaFree(d_selected_price);

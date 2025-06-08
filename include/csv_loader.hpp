@@ -71,6 +71,8 @@ struct HostTable {
 };
 
 HostTable load_csv_to_host(const std::string &filepath);
+Table upload_to_gpu(const HostTable &table,
+                    const std::vector<DataType> &schema);
 Table upload_to_gpu(const HostTable &table);
 
 // Load at most `max_rows` CSV rows from an open input stream. `finished`
