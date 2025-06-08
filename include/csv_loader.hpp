@@ -2,6 +2,15 @@
 #include <string>
 #include <vector>
 
+
+enum class DataType { Int32, Float32 };
+
+struct ColumnDesc {
+  std::string name;
+  DataType type;
+  void *device_ptr;
+  int length;
+
 struct ColumnStatsFloat {
   float min = 0.0f;
   float max = 0.0f;
@@ -17,12 +26,27 @@ struct ColumnStatsInt {
 struct TableStats {
   ColumnStatsFloat price;
   ColumnStatsInt quantity;
+
 };
 
 struct Table {
-  float *d_price; // Device pointers
-  int *d_quantity;
+  std::vector<ColumnDesc> columns;
   int num_rows;
+
+
+  template <typename T>
+  T *get_column_ptr(const std::string &name) const {
+    for (const auto &col : columns) {
+      if (col.name == name)
+        return static_cast<T *>(col.device_ptr);
+    }
+    return nullptr;
+  }
+};
+
+Table load_csv_to_gpu(const std::string &filepath,
+                      const std::vector<DataType> &schema = {});
+
   TableStats stats; // basic column statistics
 };
 
@@ -35,3 +59,4 @@ struct HostTable {
 HostTable load_csv_to_host(const std::string &filepath);
 Table upload_to_gpu(const HostTable &table);
 Table load_csv_to_gpu(const std::string &filepath);
+
