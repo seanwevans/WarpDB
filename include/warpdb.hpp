@@ -10,7 +10,8 @@
 
 class WarpDB {
 public:
-    explicit WarpDB(const std::string &filepath);
+    explicit WarpDB(const std::string &filepath,
+                    const std::vector<DataType> &schema = {});
     ~WarpDB();
 
     // Execute an expression with optional WHERE clause.
