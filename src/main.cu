@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
   std::string user_query = argv[1];
   std::string upper_query = user_query;
   for (auto &c : upper_query)
-    c = std::toupper(c);
+    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
   std::string expr_part = user_query;
   std::string where_part;
