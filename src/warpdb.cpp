@@ -46,3 +46,10 @@ std::vector<float> WarpDB::query(const std::string &expr) {
     cudaFree(d_output);
     return result;
 }
+
+void WarpDB::query_arrow(const std::string &expr, ArrowArray *out_array,
+                         ArrowSchema *out_schema, bool use_shared_memory) {
+    auto result = query(expr);
+    export_to_arrow(result.data(), static_cast<int64_t>(result.size()),
+                    use_shared_memory, out_array, out_schema);
+}
