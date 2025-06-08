@@ -30,9 +30,21 @@ void test_parentheses_tokenize() {
     }
 }
 
+void test_logical_keywords() {
+    auto tokens = tokenize("price > 10 AND quantity < 5");
+    bool found_and = false;
+    bool found_or = false;
+    for (const auto &t : tokens) {
+        if (t.type == TokenType::Keyword && t.value == "AND") found_and = true;
+        if (t.type == TokenType::Keyword && t.value == "OR") found_or = true;
+    }
+    assert(found_and && !found_or);
+}
+
 int main() {
     test_basic_tokenize();
     test_parentheses_tokenize();
+    test_logical_keywords();
     std::cout << "All tokenizer tests passed\n";
     return 0;
 }
