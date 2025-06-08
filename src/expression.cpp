@@ -78,6 +78,19 @@ ASTNodePtr parse_expression_internal() {
   return node;
 }
 
+// Parses: comparison = add (comp_op add)* where comp_op is >, <, >=, <=, ==, !=
+ASTNodePtr parse_comparison() {
+  ASTNodePtr node = parse_expression_internal();
+  while (match(">") || match("<") || match(">=") || match("<=") ||
+         match("==") || match("!=")) {
+    std::string op = toks[current - 1].value;
+    ASTNodePtr right = parse_expression_internal();
+    node =
+        std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
+  }
+  return node;
+}
+
 // Parses: term = factor ( ("*"|"/") factor )*
 ASTNodePtr parse_term() {
   ASTNodePtr node = parse_factor();
@@ -113,9 +126,11 @@ ASTNodePtr parse_factor() {
 ASTNodePtr parse_expression(const std::vector<Token> &tokens) {
   current = 0;
   toks = tokens;
-  ASTNodePtr ast = parse_expression_internal();
+
+  ASTNodePtr node = parse_comparison();
   if (peek().type != TokenType::End) {
-    throw std::runtime_error("Unexpected token: " + peek().value);
+    throw std::runtime_error("Unexpected tokens remaining: " + peek().value);
   }
-  return ast;
+  return node;
+
 }

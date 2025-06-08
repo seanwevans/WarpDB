@@ -21,3 +21,10 @@ set_target_properties(warpdb PROPERTIES
 
 target_link_libraries(warpdb PRIVATE CUDA::nvrtc CUDA::cuda_driver)
 
+add_executable(expression_test
+    tests/test_expression.cpp
+    src/expression.cpp
+)
+
+add_test(NAME expression_test COMMAND expression_test)
+
