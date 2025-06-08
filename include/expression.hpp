@@ -15,6 +15,7 @@ std::vector<Token> tokenize(const std::string &input);
 
 enum class ASTNodeType { Constant, Variable, BinaryOp, Aggregation };
 
+
 struct ASTNode {
   virtual ~ASTNode() {}
   virtual std::string to_cuda_expr() const = 0;
@@ -56,6 +57,24 @@ struct BinaryOpNode : public ASTNode {
   }
 
   ASTNodeType type() const override { return ASTNodeType::BinaryOp; }
+};
+
+struct FunctionCallNode : public ASTNode {
+  std::string name;
+  std::vector<ASTNodePtr> args;
+  FunctionCallNode(std::string n, std::vector<ASTNodePtr> a)
+      : name(std::move(n)), args(std::move(a)) {}
+  std::string to_cuda_expr() const override {
+    std::string result = name + "(";
+    for (size_t i = 0; i < args.size(); ++i) {
+      if (i > 0)
+        result += ", ";
+      result += args[i]->to_cuda_expr();
+    }
+    result += ")";
+    return result;
+  }
+  ASTNodeType type() const override { return ASTNodeType::FunctionCall; }
 };
 
 // Entry point

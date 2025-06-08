@@ -13,10 +13,11 @@ std::vector<Token> tokenize(const std::string &input) {
       continue;
     }
 
-    if (std::isalpha(static_cast<unsigned char>(input[i]))) {
+    if (std::isalpha(static_cast<unsigned char>(input[i])) || input[i] == '_') {
       std::string ident;
       while (i < input.size() &&
-             std::isalnum(static_cast<unsigned char>(input[i]))) {
+             (std::isalnum(static_cast<unsigned char>(input[i])) ||
+              input[i] == '_')) {
         ident += input[i++];
       }
       std::string upper = ident;
@@ -50,7 +51,7 @@ std::vector<Token> tokenize(const std::string &input) {
       }
       i++;
       tokens.push_back({TokenType::Operator, op});
-    } else if (std::string("+-*/()<>").find(input[i]) != std::string::npos) {
+    } else if (std::string("+-*/()<>,").find(input[i]) != std::string::npos) {
       // Remaining single-character operators
       tokens.push_back({TokenType::Operator, std::string(1, input[i++])});
     } else {
@@ -126,8 +127,20 @@ ASTNodePtr parse_factor() {
     advance();
     return std::make_unique<ConstantNode>(tok.value);
   } else if (tok.type == TokenType::Identifier) {
+    std::string ident = tok.value;
     advance();
-    return std::make_unique<VariableNode>(tok.value);
+    if (match("(")) {
+      std::vector<ASTNodePtr> args;
+      if (!match(")")) {
+        do {
+          args.push_back(parse_expression_internal());
+        } while (match(","));
+        if (!match(")"))
+          throw std::runtime_error("Expected ')' after arguments");
+      }
+      return std::make_unique<FunctionCallNode>(ident, std::move(args));
+    }
+    return std::make_unique<VariableNode>(ident);
   } else if (match("(")) {
     ASTNodePtr node = parse_expression_internal();
     if (!match(")"))

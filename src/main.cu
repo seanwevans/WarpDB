@@ -5,6 +5,58 @@
 #include "csv_loader.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
+#include "arrow_utils.hpp"
+#include "optimizer.hpp"
+
+// Simple multi-GPU execution of a JIT compiled expression.
+// Splits the input table across all available devices and aggregates the output.
+void run_multi_gpu_jit(const std::string &expr_cuda,
+                       const std::string &cond_cuda) {
+  HostTable host = load_csv_to_host("data/test.csv");
+
+  int device_count = 0;
+  cudaGetDeviceCount(&device_count);
+  if (device_count < 2) {
+    std::cout << "Only " << device_count
+              << " GPU detected. Skipping multi-device example.\n";
+    return;
+  }
+
+  int N = host.num_rows();
+  int chunk = (N + device_count - 1) / device_count;
+  std::vector<float> results(N);
+
+  for (int dev = 0; dev < device_count; ++dev) {
+    int start = dev * chunk;
+    int end = std::min(start + chunk, N);
+    if (start >= end)
+      break;
+    int local_N = end - start;
+
+    HostTable sub;
+    sub.price.assign(host.price.begin() + start, host.price.begin() + end);
+    sub.quantity.assign(host.quantity.begin() + start,
+                        host.quantity.begin() + end);
+    Table dtab = upload_to_gpu(sub);
+
+    float *d_out;
+    cudaMalloc(&d_out, sizeof(float) * local_N);
+
+    jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price, dtab.d_quantity,
+                           d_out, local_N, dev);
+
+    cudaMemcpy(results.data() + start, d_out, sizeof(float) * local_N,
+               cudaMemcpyDeviceToHost);
+
+    cudaFree(d_out);
+    cudaFree(dtab.d_price);
+    cudaFree(dtab.d_quantity);
+  }
+
+  for (int i = 0; i < N; ++i) {
+    std::cout << "MultiGPU Result[" << i << "] = " << results[i] << "\n";
+  }
+}
 
 __global__ void print_first_few(float *price, int *quantity, int N) {
   int idx = threadIdx.x;
@@ -94,6 +146,8 @@ int main(int argc, char **argv) {
 
   Table table = load_csv_to_gpu("data/test.csv");
   std::cout << "Loaded " << table.num_rows << " rows.\n";
+  float *d_price = table.get_column_ptr<float>("price");
+  int *d_quantity = table.get_column_ptr<int>("quantity");
 
   int *d_quantity_filtered;
   int *d_count;
@@ -107,7 +161,6 @@ int main(int argc, char **argv) {
   float *d_revenue;
   float *d_revenue_multi;
   float *d_adjusted_price;
-  float *d_jit_output;
 
   int h_count;
   int h_select_count;
@@ -134,19 +187,18 @@ int main(int argc, char **argv) {
   cudaMalloc(&d_revenue_multi, sizeof(float) * table.num_rows);
   cudaMalloc(&d_adjusted_price, sizeof(float) * table.num_rows);
   cudaMalloc(&d_multi_count, sizeof(int));
-  cudaMalloc(&d_jit_output, sizeof(float) * table.num_rows);
 
   cudaMemset(d_count, 0, sizeof(int));
   cudaMemset(d_select_count, 0, sizeof(int));
   cudaMemset(d_multi_count, 0, sizeof(int));
   std::cout << "Allocated space\n";
 
-  print_first_few<<<1, 4>>>(table.d_price, table.d_quantity, table.num_rows);
+  print_first_few<<<1, 4>>>(d_price, d_quantity, table.num_rows);
   cudaDeviceSynchronize();
 
-  filter_price_gt<<<blocks, threads>>>(table.d_price, table.d_quantity,
-                                       d_price_filtered, d_quantity_filtered,
-                                       d_count, table.num_rows, threshold);
+  filter_price_gt<<<blocks, threads>>>(d_price, d_quantity, d_price_filtered,
+                                       d_quantity_filtered, d_count,
+                                       table.num_rows, threshold);
   cudaDeviceSynchronize();
 
   cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
@@ -164,9 +216,10 @@ int main(int argc, char **argv) {
   }
 
   std::cout << "\nRunning SELECT projection:\n";
-  project_columns<<<blocks, threads>>>(
-      table.d_price, table.d_quantity, d_selected_price, d_selected_quantity,
-      d_select_count, table.num_rows, select_price, select_quantity);
+  project_columns<<<blocks, threads>>>(d_price, d_quantity, d_selected_price,
+                                       d_selected_quantity, d_select_count,
+                                       table.num_rows, select_price,
+                                       select_quantity);
   cudaDeviceSynchronize();
 
   cudaMemcpy(&h_select_count, d_select_count, sizeof(int),
@@ -190,9 +243,9 @@ int main(int argc, char **argv) {
 
   std::cout << "\nRunning SELECT revenue (price * quantity) with WHERE price > "
                "threshold:\n";
-  project_revenue<<<blocks, threads>>>(table.d_price, table.d_quantity,
-                                       d_revenue, d_revenue_count,
-                                       table.num_rows, threshold);
+  project_revenue<<<blocks, threads>>>(d_price, d_quantity, d_revenue,
+                                       d_revenue_count, table.num_rows,
+                                       threshold);
   cudaDeviceSynchronize();
 
   cudaMemcpy(&h_revenue_count, d_revenue_count, sizeof(int),
@@ -209,8 +262,8 @@ int main(int argc, char **argv) {
 
   std::cout << "\nRunning SELECT revenue and adjusted_price:\n";
   project_revenue_and_adjusted<<<blocks, threads>>>(
-      table.d_price, table.d_quantity, d_revenue_multi, d_adjusted_price,
-      d_multi_count, table.num_rows, threshold);
+      d_price, d_quantity, d_revenue_multi, d_adjusted_price, d_multi_count,
+      table.num_rows, threshold);
   cudaDeviceSynchronize();
 
   cudaMemcpy(&h_multi_count, d_multi_count, sizeof(int),
@@ -228,10 +281,9 @@ int main(int argc, char **argv) {
               << ", adjusted price = " << h_adjusted_price[i] << "\n";
   }
 
-  // tokenize
-  auto expr_tokens = tokenize(expr_part);
-  auto expr_ast = parse_expression(expr_tokens);
-  std::string expr_cuda = expr_ast->to_cuda_expr();
+  std::cout << "\n[ Optimizer Demo ]\n";
+  execute_query_optimized(expr_part, where_part, table);
+
 
   std::string condition_cuda;
   if (!where_part.empty()) {
@@ -260,8 +312,9 @@ int main(int argc, char **argv) {
 
   // compile
   std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
-  jit_compile_and_launch(expr_cuda, condition_cuda, table.d_price,
-                         table.d_quantity, d_jit_output, table.num_rows);
+
+  jit_compile_and_launch(expr_cuda, condition_cuda, table, d_jit_output);
+
 
   float *h_jit_output = new float[table.num_rows];
   cudaMemcpy(h_jit_output, d_jit_output, sizeof(float) * table.num_rows,
@@ -270,7 +323,21 @@ int main(int argc, char **argv) {
     std::cout << "JIT Result[" << i << "] = " << h_jit_output[i] << "\n";
   }
 
+
+  // Export results to Arrow for external visualization
+  ArrowArray arr;
+  ArrowSchema schema;
+  export_to_arrow(h_jit_output, table.num_rows, false, &arr, &schema);
+  std::cout << "Arrow result length: " << arr.length << "\n";
+  arr.release(&arr);
+  schema.release(&schema);
+
+  std::cout << "\n[ Multi-GPU JIT Example ]\n";
+  run_multi_gpu_jit(expr_cuda, condition_cuda);
+
+
   delete[] h_jit_output;
+
   delete[] h_revenue_multi;
   delete[] h_adjusted_price;
   delete[] h_revenue;
@@ -279,7 +346,6 @@ int main(int argc, char **argv) {
   delete[] h_price_filtered;
   delete[] h_quantity_filtered;
 
-  cudaFree(d_jit_output);
   cudaFree(d_revenue_multi);
   cudaFree(d_adjusted_price);
   cudaFree(d_multi_count);
@@ -291,8 +357,9 @@ int main(int argc, char **argv) {
   cudaFree(d_price_filtered);
   cudaFree(d_quantity_filtered);
   cudaFree(d_count);
-  cudaFree(table.d_price);
-  cudaFree(table.d_quantity);
+  for (auto &col : table.columns) {
+    cudaFree(col.device_ptr);
+  }
 
   return 0;
 }
