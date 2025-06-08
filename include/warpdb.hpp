@@ -21,6 +21,18 @@ public:
     // Currently JOIN loads the same table for demonstration purposes.
     std::vector<float> query_sql(const std::string &sql);
 
+    // Execute a query using all available GPUs on the data loaded in this
+    // WarpDB instance. Falls back to single-GPU execution when only one device
+    // is present.
+    std::vector<float> query_multi_gpu(const std::string &expr);
+
+    // Stream a CSV file in chunks and execute the same expression across all
+    // GPUs. Useful when the dataset is larger than GPU memory. This static
+    // helper does not require constructing a WarpDB instance.
+    static std::vector<float> query_multi_gpu_csv(const std::string &csv_path,
+                                                 const std::string &expr,
+                                                 int rows_per_chunk = 1000000);
+
     // Execute a query and export the results as Arrow buffers.
     // The ArrowArray and ArrowSchema must be provided by the caller.
     // When use_shared_memory is true, the result buffer is created in

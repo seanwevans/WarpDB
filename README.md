@@ -16,7 +16,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Arrow Results**: Retrieve query results as Arrow buffers for easy sharing
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
 - **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
-- **Multi-GPU Execution**: Stream large CSV files across multiple GPUs
+- **Multi-GPU Execution**: Robust support for running queries across multiple GPUs, including streaming large CSV files
 
 ## Architecture
 
@@ -147,11 +147,18 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 
 ### Multi-GPU Example
 
-WarpDB includes helpers `run_multi_gpu_jit` and `run_multi_gpu_jit_large`
-demonstrating how to split the input table across available GPUs and execute the
-same JIT-compiled kernel on each device. The `run_multi_gpu_jit_large` variant
-streams the CSV file in chunks, enabling processing of datasets larger than a
-single GPU's memory. Results are aggregated back on the host.
+WarpDB exposes `query_multi_gpu` and `query_multi_gpu_csv` to run expressions on
+all available GPUs. The CSV variant streams the file in chunks so datasets can
+exceed a single GPU's memory.
+
+```python
+db = pywarpdb.WarpDB("data/test.csv")
+result = db.query_multi_gpu("price * quantity")
+
+# Process a huge CSV without loading the entire file
+big_res = pywarpdb.WarpDB.query_multi_gpu_csv(
+    "large.csv", "price * quantity", rows_per_chunk=1_000_000)
+```
 
 ## Project Structure
 
@@ -240,4 +247,3 @@ The project has recently gained several improvements:
 - Extend SQL support beyond the basic JOIN/GROUP BY/ORDER BY implementation
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
-- Multi-GPU support for larger datasets

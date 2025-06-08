@@ -8,6 +8,13 @@ PYBIND11_MODULE(pywarpdb, m) {
     py::class_<WarpDB>(m, "WarpDB")
         .def(py::init<const std::string &>())
         .def("query", &WarpDB::query)
+        .def("query_multi_gpu", &WarpDB::query_multi_gpu,
+             py::arg("expr"),
+             R"pbdoc(Execute expression using all available GPUs on the current table.)pbdoc")
+        .def_static("query_multi_gpu_csv", &WarpDB::query_multi_gpu_csv,
+                    py::arg("csv_path"), py::arg("expr"),
+                    py::arg("rows_per_chunk") = 1000000,
+                    R"pbdoc(Stream a CSV file in chunks across all GPUs and return results.)pbdoc")
         .def("query_arrow",
              [](WarpDB &db, const std::string &expr, bool shared_memory) {
                  auto arr = new ArrowArray();
