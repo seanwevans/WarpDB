@@ -238,7 +238,12 @@ bool eval_condition(const ASTNode *node, const Row &r) {
 
 std::vector<float> WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
-    QueryAST ast = parse_query(tokens);
+    QueryAST ast;
+    try {
+        ast = parse_query(tokens);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
+    }
 
     std::vector<Row> rows;
     rows.reserve(host_table_.num_rows());
