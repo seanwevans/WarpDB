@@ -101,6 +101,10 @@ struct LimitClause {
   int count;
 };
 
+struct OffsetClause {
+  int count;
+};
+
 struct WindowFunctionNode : public ASTNode {
   AggregationType agg;
   ASTNodePtr expr;
@@ -124,11 +128,14 @@ struct GroupByClause {
 struct QueryAST {
   std::vector<ASTNodePtr> select_list;
   std::string from_table;
-  std::optional<JoinClause> join;
+  std::vector<JoinClause> joins;
   std::optional<ASTNodePtr> where;
   std::optional<GroupByClause> group_by;
+  std::optional<ASTNodePtr> having;
   std::optional<OrderByClause> order_by;
   std::optional<LimitClause> limit;
+  std::optional<OffsetClause> offset;
+  bool distinct = false;
 };
 
 QueryAST parse_query(const std::vector<Token> &tokens);

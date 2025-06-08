@@ -61,7 +61,7 @@ WarpDB consists of the following main components:
 - C++17 compatible compiler
 - NVIDIA GPU with compute capability 7.0 or higher
 - [Optional] Apache Arrow with CUDA support for zero-copy columnar data
-- [Optional] `pybind11` to build the Python module
+- [Optional] `pybind11` to build the Python module (set `-DWARPDB_BUILD_PYTHON=ON`)
 
 The build system uses `find_package(CUDAToolkit)` to automatically locate
 NVRTC and the CUDA driver. Ensure the CUDA toolkit is installed and available
@@ -74,11 +74,13 @@ mkdir build
 cd build
 cmake ..  # CMake will locate the CUDA toolkit automatically
 # Arrow and pybind11 are discovered via `find_package` when installed
+# Use -DWARPDB_BUILD_PYTHON=OFF to skip the Python bindings
 make
 ```
 
-When `pybind11` is available a `pywarpdb` Python module is generated in the
-build directory alongside the C++ binaries.
+If `pybind11` is detected a `pywarpdb` module is produced in the build
+directory alongside the C++ binaries.  When it is not found the rest of the
+project still builds normally.
 
 ## Testing
 
@@ -117,6 +119,7 @@ You can then invoke the function in a query:
 
 ### Python API
 
+
 You can also use WarpDB directly from Python if `pybind11` is available.
 Install the bindings with `pip`, which will compile the `pywarpdb` extension:
 
@@ -129,6 +132,11 @@ You can also build a wheel for redistribution:
 ```bash
 pip wheel . -w dist
 ```
+
+You can also use WarpDB directly from Python when the optional bindings are
+enabled.  They are built automatically when `pybind11` is present and
+`-DWARPDB_BUILD_PYTHON=ON` (the default) is passed to CMake:
+
 
 ```python
 import pywarpdb
@@ -259,19 +267,21 @@ The project has recently gained several improvements:
 - Basic query optimization uses column statistics for simple filter pushdown.
 - RAII wrappers manage CUDA contexts and modules to avoid resource leaks.
 - Helper functions demonstrate streaming across multiple GPUs.
-- Python bindings are available when `pybind11` is installed.
+- Python bindings are built when `pybind11` is installed and
+  `-DWARPDB_BUILD_PYTHON=ON`.
 
 ## Limitations
 
 - Currently supports a limited subset of SQL functionality
 - Only supports simple CSV files with basic data types
-- Basic support for joins, aggregations, ordering, and LIMIT clauses
+- Basic support for joins, aggregations, ordering, LIMIT and OFFSET clauses, and HAVING filters
 - Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
-- Building the Python module requires `pybind11`
+- Building the Python module requires `pybind11` or disable it with
+  `-DWARPDB_BUILD_PYTHON=OFF`
 
 ## Future Improvements
 
-- Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY and LIMIT
+- Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY, LIMIT, HAVING, and OFFSET
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
