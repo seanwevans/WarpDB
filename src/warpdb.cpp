@@ -42,8 +42,13 @@ WarpDB::WarpDB(const std::string &csv_path) {
 }
 
 WarpDB::~WarpDB() {
+#ifdef USE_ARROW
+    table_.d_price.reset();
+    table_.d_quantity.reset();
+#else
     cudaFree(table_.d_price);
     cudaFree(table_.d_quantity);
+#endif
 }
 
 std::vector<float> WarpDB::query(const std::string &expr) {
