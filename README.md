@@ -10,6 +10,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
+- **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
 
 ## Architecture
 
@@ -57,6 +58,7 @@ make
 ./warpdb "query_expression [WHERE condition]"
 ```
 
+
 ### Custom CUDA Functions
 
 WarpDB looks for a file named `custom.cu` in the working directory at runtime.
@@ -76,6 +78,18 @@ You can then invoke the function in a query:
 
 ```bash
 ./warpdb "discount(price, 0.9)"
+```
+
+### Python API
+
+You can also use WarpDB directly from Python if `pybind11` is available:
+
+```python
+import pywarpdb
+
+db = pywarpdb.WarpDB("data/test.csv")
+result = db.query("price * quantity WHERE price > 10")
+print(result)
 ```
 
 ### Example Queries

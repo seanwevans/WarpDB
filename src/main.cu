@@ -5,6 +5,7 @@
 #include "csv_loader.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
+#include "optimizer.hpp"
 
 __global__ void print_first_few(float *price, int *quantity, int N) {
   int idx = threadIdx.x;
@@ -107,7 +108,6 @@ int main(int argc, char **argv) {
   float *d_revenue;
   float *d_revenue_multi;
   float *d_adjusted_price;
-  float *d_jit_output;
 
   int h_count;
   int h_select_count;
@@ -134,7 +134,6 @@ int main(int argc, char **argv) {
   cudaMalloc(&d_revenue_multi, sizeof(float) * table.num_rows);
   cudaMalloc(&d_adjusted_price, sizeof(float) * table.num_rows);
   cudaMalloc(&d_multi_count, sizeof(int));
-  cudaMalloc(&d_jit_output, sizeof(float) * table.num_rows);
 
   cudaMemset(d_count, 0, sizeof(int));
   cudaMemset(d_select_count, 0, sizeof(int));
@@ -228,49 +227,9 @@ int main(int argc, char **argv) {
               << ", adjusted price = " << h_adjusted_price[i] << "\n";
   }
 
-  // tokenize
-  auto expr_tokens = tokenize(expr_part);
-  auto expr_ast = parse_expression(expr_tokens);
-  std::string expr_cuda = expr_ast->to_cuda_expr();
+  std::cout << "\n[ Optimizer Demo ]\n";
+  execute_query_optimized(expr_part, where_part, table);
 
-  std::string condition_cuda;
-  if (!where_part.empty()) {
-    auto cond_tokens = tokenize(where_part);
-    auto cond_ast = parse_expression(cond_tokens);
-    condition_cuda = cond_ast->to_cuda_expr();
-  }
-
-  auto tokens = tokenize(user_query);
-  std::cout << "\nTokenized Expression:\n";
-  for (auto &tok : tokens) {
-    std::cout << "  ["
-              << (tok.type == TokenType::Identifier ? "ID"
-                  : tok.type == TokenType::Number   ? "NUM"
-                  : tok.type == TokenType::Operator ? "OP"
-                                                    : "END")
-              << "] " << tok.value << "\n";
-  }
-
-  // parse
-  auto ast = parse_expression(tokens);
-  std::cout << "\nParsed Expression (CUDA):\n";
-
-  std::string cuda_expr = ast->to_cuda_expr();
-  std::cout << cuda_expr << "\n";
-
-  // compile
-  std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
-  jit_compile_and_launch(expr_cuda, condition_cuda, table.d_price,
-                         table.d_quantity, d_jit_output, table.num_rows);
-
-  float *h_jit_output = new float[table.num_rows];
-  cudaMemcpy(h_jit_output, d_jit_output, sizeof(float) * table.num_rows,
-             cudaMemcpyDeviceToHost);
-  for (int i = 0; i < table.num_rows; ++i) {
-    std::cout << "JIT Result[" << i << "] = " << h_jit_output[i] << "\n";
-  }
-
-  delete[] h_jit_output;
   delete[] h_revenue_multi;
   delete[] h_adjusted_price;
   delete[] h_revenue;
@@ -279,7 +238,6 @@ int main(int argc, char **argv) {
   delete[] h_price_filtered;
   delete[] h_quantity_filtered;
 
-  cudaFree(d_jit_output);
   cudaFree(d_revenue_multi);
   cudaFree(d_adjusted_price);
   cudaFree(d_multi_count);
