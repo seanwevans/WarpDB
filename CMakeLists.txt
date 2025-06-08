@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 
 project(WarpDB LANGUAGES CXX CUDA)
 
+# Avoid passing system headers with '-isystem' which may interfere
+# with '#include_next' in the standard library on some platforms.
+set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-I")
+
 enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -31,8 +35,6 @@ set(WARPDB_SRC
 
 if(Arrow_FOUND)
     list(APPEND WARPDB_SRC src/arrow_loader.cpp)
-else()
-    list(APPEND WARPDB_SRC src/arrow_loader_stub.cpp)
 endif()
 
 add_executable(warpdb ${WARPDB_SRC})
@@ -90,7 +92,7 @@ add_executable(jit_arch_test
     tests/jit_arch_test.cpp
     src/jit.cpp
 )
-target_link_libraries(jit_arch_test PRIVATE CUDA::nvrtc CUDA::cuda_driver)
+target_link_libraries(jit_arch_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_arch_test COMMAND jit_arch_test)
 
 add_library(warpdb_lib STATIC
@@ -109,8 +111,6 @@ target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)
 
 if(Arrow_FOUND)
     target_sources(warpdb_lib PRIVATE src/arrow_loader.cpp)
-else()
-    target_sources(warpdb_lib PRIVATE src/arrow_loader_stub.cpp)
 endif()
 set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
