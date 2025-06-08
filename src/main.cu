@@ -5,6 +5,7 @@
 #include "csv_loader.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
+#include "arrow_utils.hpp"
 
 __global__ void print_first_few(float *price, int *quantity, int N) {
   int idx = threadIdx.x;
@@ -269,6 +270,14 @@ int main(int argc, char **argv) {
   for (int i = 0; i < table.num_rows; ++i) {
     std::cout << "JIT Result[" << i << "] = " << h_jit_output[i] << "\n";
   }
+
+  // Export results to Arrow for external visualization
+  ArrowArray arr;
+  ArrowSchema schema;
+  export_to_arrow(h_jit_output, table.num_rows, false, &arr, &schema);
+  std::cout << "Arrow result length: " << arr.length << "\n";
+  arr.release(&arr);
+  schema.release(&schema);
 
   delete[] h_jit_output;
   delete[] h_revenue_multi;
