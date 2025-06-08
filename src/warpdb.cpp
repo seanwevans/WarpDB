@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <fstream>
 
 #include <map>
 #include <utility>
 #include "arrow_loader.hpp"
+#include "multi_gpu_utils.hpp"
 #include <stdexcept>
 #include <unordered_set>
 #include <memory>
@@ -40,6 +42,7 @@ void validate_ast(const ASTNode *node,
         }
     }
 }
+
 
 std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
                                           const std::string &expr_cuda,
@@ -100,6 +103,7 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
 
     return results;
 }
+
 } // namespace
 
 namespace {
@@ -254,7 +258,42 @@ std::vector<float> WarpDB::query(const std::string &expr) {
 
 std::vector<float> WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
-    QueryAST ast = parse_query(tokens);
+    QueryAST ast;
+    try {
+        ast = parse_query(tokens);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
+    }
+
+    std::unordered_set<std::string> cols;
+    for (const auto &c : table_.columns) cols.insert(c.name);
+
+    auto validate_ctx = [&](const ASTNode *node, const std::string &ctx) {
+        if (!node) return;
+        try {
+            validate_ast(node, cols);
+        } catch (const std::exception &e) {
+            throw std::runtime_error(ctx + ": " + e.what());
+        }
+    };
+
+    for (const auto &expr : ast.select_list) {
+        validate_ctx(expr.get(), "SELECT clause");
+    }
+    if (ast.join) {
+        validate_ctx(ast.join->condition.get(), "JOIN condition");
+    }
+    if (ast.where) {
+        validate_ctx(ast.where.value().get(), "WHERE clause");
+    }
+    if (ast.group_by) {
+        for (const auto &k : ast.group_by->keys) {
+            validate_ctx(k.get(), "GROUP BY");
+        }
+    }
+    if (ast.order_by) {
+        validate_ctx(ast.order_by->expr.get(), "ORDER BY");
+    }
 
     std::vector<int> rows;
     int N = host_table_.num_rows();
@@ -285,8 +324,49 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
             g.min = std::min(g.min, (double)val);
             g.max = std::max(g.max, (double)val);
         }
+
+        auto eval_having_node = [&](const ASTNode *node, const AggData &gd) -> float {
+            if (auto c = dynamic_cast<const ConstantNode *>(node)) {
+                return std::stof(c->value);
+            }
+            if (auto b = dynamic_cast<const BinaryOpNode *>(node)) {
+                float l = eval_having_node(b->left.get(), gd);
+                float r = eval_having_node(b->right.get(), gd);
+                const std::string &op = b->op;
+                if (op == "+") return l + r;
+                if (op == "-") return l - r;
+                if (op == "*") return l * r;
+                if (op == "/") return l / r;
+                if (op == ">") return l > r;
+                if (op == "<") return l < r;
+                if (op == ">=") return l >= r;
+                if (op == "<=") return l <= r;
+                if (op == "==") return l == r;
+                if (op == "!=") return l != r;
+            }
+            if (auto ag = dynamic_cast<const AggregationNode *>(node)) {
+                switch (ag->agg) {
+                case AggregationType::Sum: return gd.sum;
+                case AggregationType::Avg: return gd.sum / gd.count;
+                case AggregationType::Count: return gd.count;
+                case AggregationType::Min: return gd.min;
+                case AggregationType::Max: return gd.max;
+                }
+
+            }
+            return 0.0f;
+        };
+
+
+        auto eval_having = [&](const AggData &gd) -> bool {
+            if (!ast.having) return true;
+            return eval_having_node(ast.having.value().get(), gd) != 0.0f;
+        };
+
         for (const auto &kv : groups) {
             const AggData &g = kv.second;
+            if (!eval_having(g)) continue;
+
             switch (agg->agg) {
             case AggregationType::Sum: result.push_back(g.sum); break;
             case AggregationType::Avg: result.push_back(g.sum / g.count); break;
@@ -301,6 +381,13 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         }
     }
 
+    if (ast.distinct) {
+        std::vector<float> tmp = result;
+        std::sort(tmp.begin(), tmp.end());
+        tmp.erase(std::unique(tmp.begin(), tmp.end()), tmp.end());
+        result.swap(tmp);
+    }
+
     if (ast.order_by) {
         std::vector<std::pair<float,float>> keyed;
         for (size_t i=0;i<rows.size();++i) {
@@ -312,6 +399,12 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         });
         result.clear();
         for (const auto &kv : keyed) result.push_back(kv.second);
+    }
+
+    if (ast.offset) {
+        size_t off = static_cast<size_t>(ast.offset->count);
+        if (off >= result.size()) result.clear();
+        else result.erase(result.begin(), result.begin() + off);
     }
 
     if (ast.limit) {
