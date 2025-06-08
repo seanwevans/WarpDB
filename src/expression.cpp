@@ -40,10 +40,11 @@ std::vector<Token> tokenize(const std::string &input) {
       for (auto &c : upper)
         c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
       static const std::unordered_set<std::string> keywords = {
-          "SELECT",   "FROM",    "WHERE",  "JOIN",   "ON",   "GROUP",
-          "BY",       "ORDER",   "ASC",    "DESC",  "LIMIT", "SUM",
-          "AVG",      "COUNT",   "MIN",    "MAX",   "OVER", "PARTITION",
-          "AND",      "OR",      "HAVING", "DISTINCT"};
+          "SELECT",    "FROM",    "WHERE",  "JOIN",   "ON",    "GROUP",
+          "BY",        "ORDER",   "ASC",    "DESC",   "LIMIT", "OFFSET",
+          "SUM",       "AVG",     "COUNT",  "MIN",    "MAX",   "OVER", 
+          "PARTITION", "AND",     "OR",     "HAVING", "DISTINCT"};
+
       if (keywords.count(upper)) {
         tokens.push_back({TokenType::Keyword, upper});
       } else {
@@ -405,6 +406,21 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
 
+      tokens[pos].value == "HAVING") {
+    pos++;
+    size_t start = pos;
+    while (pos < tokens.size() &&
+           !(tokens[pos].type == TokenType::Keyword &&
+             (tokens[pos].value == "ORDER" || tokens[pos].value == "LIMIT" ||
+              tokens[pos].value == "OFFSET")))
+      pos++;
+    std::vector<Token> hv(tokens.begin() + start, tokens.begin() + pos);
+    hv.push_back({TokenType::End, ""});
+    query.having = parse_expression(hv);
+  }
+
+  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+
       tokens[pos].value == "ORDER") {
     pos++;
     expect_kw("BY");
@@ -436,9 +452,20 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     query.limit = lc;
   }
 
+
+  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
+      tokens[pos].value == "OFFSET") {
+    pos++;
+    if (pos >= tokens.size() || tokens[pos].type != TokenType::Number)
+      throw std::runtime_error("Expected numeric value after OFFSET");
+    OffsetClause oc{std::stoi(tokens[pos].value)};
+    pos++;
+    query.offset = oc;
+
   if (pos != end) {
     throw std::runtime_error("Unexpected token in query near: " +
                              tokens[pos].value);
+
   }
 
   return query;

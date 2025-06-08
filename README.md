@@ -259,7 +259,7 @@ The project has recently gained several improvements:
 
 - Currently supports a limited subset of SQL functionality
 - Only supports simple CSV files with basic data types
-- Basic support for joins, aggregations, ordering, and LIMIT clauses
+- Basic support for joins, aggregations, ordering, LIMIT and OFFSET clauses, and HAVING filters
 - Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
 - Building the Python module requires `pybind11` or disable it with
@@ -267,6 +267,6 @@ The project has recently gained several improvements:
 
 ## Future Improvements
 
-- Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY and LIMIT
+- Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY, LIMIT, HAVING, and OFFSET
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
