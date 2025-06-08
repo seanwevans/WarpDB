@@ -79,6 +79,13 @@ add_executable(sql_features_test
 
 add_test(NAME sql_features_test COMMAND sql_features_test)
 
+add_executable(jit_error_test
+    tests/jit_error_test.cpp
+    src/jit.cpp
+)
+target_link_libraries(jit_error_test PRIVATE CUDA::nvrtc CUDA::cuda_driver)
+add_test(NAME jit_error_test COMMAND jit_error_test)
+
 add_library(warpdb_lib STATIC
     src/warpdb.cpp
     src/csv_loader.cpp
