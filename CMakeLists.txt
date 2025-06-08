@@ -69,6 +69,16 @@ add_executable(query_parser_test
 
 add_test(NAME query_parser_test COMMAND query_parser_test)
 
+add_executable(sql_features_test
+    tests/sql_features_test.cpp
+    src/warpdb.cpp
+    src/csv_loader.cpp
+    src/expression.cpp
+    src/jit.cpp
+)
+
+add_test(NAME sql_features_test COMMAND sql_features_test)
+
 add_library(warpdb_lib STATIC
     src/warpdb.cpp
     src/csv_loader.cpp
