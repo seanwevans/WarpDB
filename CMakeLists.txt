@@ -72,6 +72,7 @@ add_library(warpdb_lib STATIC
     src/csv_loader.cpp
     src/expression.cpp
     src/jit.cpp
+    src/arrow_utils.cpp
 )
 set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)
