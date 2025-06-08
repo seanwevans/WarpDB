@@ -358,8 +358,7 @@ int main(int argc, char **argv) {
   // compile
   std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
 
-  // JIT compile and launch the expression kernel
-  // use the CUDA expression generated above
+
   jit_compile_and_launch(expr_cuda, condition_cuda,
 #ifdef USE_ARROW
                          reinterpret_cast<float *>(table.d_price->mutable_data()),

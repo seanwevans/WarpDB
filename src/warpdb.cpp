@@ -256,6 +256,44 @@ std::vector<float> WarpDB::query(const std::string &expr) {
     return result;
 }
 
+
+
+namespace {
+struct Row { float price; int quantity; };
+
+float eval_node(const ASTNode *node, const Row &r) {
+    if (auto c = dynamic_cast<const ConstantNode *>(node)) {
+        return std::stof(c->value);
+    }
+    if (auto v = dynamic_cast<const VariableNode *>(node)) {
+        if (v->name == "price") return r.price;
+        if (v->name == "quantity") return static_cast<float>(r.quantity);
+        return 0.0f;
+    }
+    if (auto b = dynamic_cast<const BinaryOpNode *>(node)) {
+        float l = eval_node(b->left.get(), r);
+        float rr = eval_node(b->right.get(), r);
+        const std::string &op = b->op;
+        if (op == "+") return l + rr;
+        if (op == "-") return l - rr;
+        if (op == "*") return l * rr;
+        if (op == "/") return l / rr;
+        if (op == ">") return l > rr;
+        if (op == "<") return l < rr;
+        if (op == ">=") return l >= rr;
+        if (op == "<=") return l <= rr;
+        if (op == "==") return l == rr;
+        if (op == "!=") return l != rr;
+    }
+    return 0.0f;
+}
+
+bool eval_condition(const ASTNode *node, const Row &r) {
+    return eval_node(node, r) != 0.0f;
+}
+
+
+
 std::vector<float> WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
     QueryAST ast;
@@ -305,14 +343,33 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         rows.push_back(i);
     }
 
+
     std::vector<float> result;
 
     if (ast.group_by) {
-        struct AggData { double sum=0.0; double count=0.0; double min=0.0; double max=0.0; bool init=false; };
-        std::map<int, AggData> groups;
         auto *agg = dynamic_cast<AggregationNode *>(ast.select_list[0].get());
-        for (int idx : rows) {
-            int key = static_cast<int>(eval_node(ast.group_by->keys[0].get(), host_table_, idx));
+
+
+        if (!agg) throw std::runtime_error("Only aggregation queries supported with GROUP BY");
+
+        float *d_vals; int *d_keys; int *d_count;
+        cudaMalloc(&d_vals, sizeof(float)*table_.num_rows);
+        cudaMalloc(&d_keys, sizeof(int)*table_.num_rows);
+        cudaMalloc(&d_count, sizeof(int));
+        cudaMemset(d_count, 0, sizeof(int));
+
+        std::string val_expr = agg->expr->to_cuda_expr();
+        std::string key_expr = ast.group_by->keys[0]->to_cuda_expr();
+        jit_group_sum(val_expr, key_expr, table_.d_price, table_.d_quantity,
+                      d_vals, d_keys, d_count, table_.num_rows);
+
+        int h_count = 0;
+        cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
+        if (ast.order_by) {
+            jit_sort_pairs(d_keys, d_vals, h_count, ast.order_by->ascending);
+
+        for (const auto &r : rows) {
+            int key = static_cast<int>(eval_node(ast.group_by->keys[0].get(), r));
             float val = 0.0f;
             if (agg && agg->agg != AggregationType::Count) {
                 val = eval_node(agg->expr.get(), host_table_, idx);
@@ -374,12 +431,32 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
             case AggregationType::Min: result.push_back(g.min); break;
             case AggregationType::Max: result.push_back(g.max); break;
             }
+
         }
+
+        std::vector<float> h_vals(h_count);
+        cudaMemcpy(h_vals.data(), d_vals, sizeof(float)*h_count, cudaMemcpyDeviceToHost);
+        cudaFree(d_vals); cudaFree(d_keys); cudaFree(d_count);
+
+        int limit = ast.limit ? std::min(ast.limit->count, h_count) : h_count;
+        for (int i=0;i<limit;i++) result.push_back(h_vals[i]);
     } else {
+
+        float *d_out;
+        cudaMalloc(&d_out, sizeof(float)*table_.num_rows);
+        std::string expr_code = ast.select_list[0]->to_cuda_expr();
+        jit_compile_and_launch(expr_code, "", table_.d_price, table_.d_quantity,
+                               d_out, table_.num_rows);
+
+
+        if (ast.order_by && expr_code == ast.order_by->expr->to_cuda_expr()) {
+            jit_sort_float(d_out, table_.num_rows, ast.order_by->ascending);
+
         for (int idx : rows) {
             result.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
         }
     }
+
 
     if (ast.distinct) {
         std::vector<float> tmp = result;
@@ -393,13 +470,15 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         for (size_t i=0;i<rows.size();++i) {
             float key = eval_node(ast.order_by->expr.get(), host_table_, rows[i]);
             keyed.push_back({key, result[i]});
+
         }
-        std::sort(keyed.begin(), keyed.end(), [&](const auto &a, const auto &b){
-            if (ast.order_by->ascending) return a.first < b.first; else return a.first > b.first;
-        });
-        result.clear();
-        for (const auto &kv : keyed) result.push_back(kv.second);
-    }
+
+
+        result.resize(table_.num_rows);
+        cudaMemcpy(result.data(), d_out, sizeof(float)*table_.num_rows, cudaMemcpyDeviceToHost);
+        cudaFree(d_out);
+
+        if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size())
 
     if (ast.offset) {
         size_t off = static_cast<size_t>(ast.offset->count);
@@ -409,6 +488,7 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
 
     if (ast.limit) {
         if (static_cast<size_t>(ast.limit->count) < result.size())
+
             result.resize(ast.limit->count);
     }
 

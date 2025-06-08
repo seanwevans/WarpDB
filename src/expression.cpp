@@ -529,3 +529,19 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
 
   return query;
 }
+
+std::string AggregationNode::agg_kernel() const {
+  switch (agg) {
+  case AggregationType::Sum:
+    return "sum";
+  case AggregationType::Avg:
+    return "avg";
+  case AggregationType::Count:
+    return "count";
+  case AggregationType::Min:
+    return "min";
+  case AggregationType::Max:
+    return "max";
+  }
+  return "";
+}
