@@ -72,6 +72,12 @@ make
 ./warpdb "price * quantity * 1.08"
 ```
 
+### Multi-GPU Example
+
+WarpDB includes a helper `run_multi_gpu_jit` demonstrating how to split the
+input table across available GPUs and execute the same JIT-compiled kernel on
+each device. Results are aggregated back on the host.
+
 ## Project Structure
 
 ```
