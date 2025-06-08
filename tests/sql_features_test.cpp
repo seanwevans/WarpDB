@@ -25,7 +25,16 @@ int main(){
     std::vector<float> prices = h.price;
     std::sort(prices.begin(), prices.end(), std::greater<float>());
     assert(limited.size() == 2);
+
     assert(std::abs(limited[0]-prices[0])<1e-5);
     assert(std::abs(limited[1]-prices[1])<1e-5);
+
+
+    auto offset = db.query_sql("SELECT price FROM test ORDER BY price DESC OFFSET 1 LIMIT 2");
+    assert(offset.size() == 2);
+
+    auto having = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) > 15 ORDER BY quantity ASC");
+    assert(having.size() == 3);
+
     return 0;
 }

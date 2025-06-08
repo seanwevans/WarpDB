@@ -7,7 +7,7 @@ int main() {
     auto tokens = tokenize(q);
     QueryAST ast = parse_query(tokens);
     assert(ast.select_list.size() == 2);
-    assert(ast.join.has_value());
+    assert(!ast.joins.empty());
     assert(ast.where.has_value());
     assert(ast.group_by.has_value());
     assert(ast.order_by.has_value());

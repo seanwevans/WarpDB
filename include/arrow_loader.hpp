@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <stdexcept>
+#include "csv_loader.hpp" // for Table structure
 #ifdef USE_ARROW
 #include <arrow/api.h>
 #include <arrow/cuda/api.h>
@@ -35,6 +36,4 @@ inline Table load_orc_to_gpu(const std::string &) {
     throw std::runtime_error("Arrow support not available");
 }
 #endif
-
-#include "csv_loader.hpp" // for Table structure
 

@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <fstream>
 
 #include <map>
 #include <utility>
 #include "arrow_loader.hpp"
+#include "multi_gpu_utils.hpp"
 #include <stdexcept>
 #include <unordered_set>
 #include <memory>
@@ -41,60 +43,6 @@ void validate_ast(const ASTNode *node,
     }
 }
 
-std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
-                                          const std::string &expr_cuda,
-                                          const std::string &cond_cuda) {
-    int device_count = 0;
-    cudaGetDeviceCount(&device_count);
-    if (device_count < 2) {
-        Table dtab = upload_to_gpu(host);
-        float *d_out;
-        cudaMalloc(&d_out, sizeof(float) * host.num_rows());
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price,
-                               dtab.d_quantity, d_out, host.num_rows(), 0);
-        std::vector<float> result(host.num_rows());
-        cudaMemcpy(result.data(), d_out, sizeof(float) * host.num_rows(),
-                   cudaMemcpyDeviceToHost);
-        cudaFree(d_out);
-        cudaFree(dtab.d_price);
-        cudaFree(dtab.d_quantity);
-        return result;
-    }
-
-    int N = host.num_rows();
-    int chunk = (N + device_count - 1) / device_count;
-    std::vector<float> results(N);
-
-    for (int dev = 0; dev < device_count; ++dev) {
-        int start = dev * chunk;
-        int end = std::min(start + chunk, N);
-        if (start >= end)
-            break;
-        int local_N = end - start;
-
-        HostTable sub;
-        sub.price.assign(host.price.begin() + start, host.price.begin() + end);
-        sub.quantity.assign(host.quantity.begin() + start,
-                            host.quantity.begin() + end);
-        cudaSetDevice(dev);
-        Table dtab = upload_to_gpu(sub);
-
-        float *d_out;
-        cudaMalloc(&d_out, sizeof(float) * local_N);
-
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab.d_price,
-                               dtab.d_quantity, d_out, local_N, dev);
-
-        cudaMemcpy(results.data() + start, d_out, sizeof(float) * local_N,
-                   cudaMemcpyDeviceToHost);
-
-        cudaFree(d_out);
-        cudaFree(dtab.d_price);
-        cudaFree(dtab.d_quantity);
-    }
-
-    return results;
-}
 } // namespace
 
 WarpDB::WarpDB(const std::string &filepath) {
@@ -234,16 +182,52 @@ float eval_node(const ASTNode *node, const Row &r) {
 bool eval_condition(const ASTNode *node, const Row &r) {
     return eval_node(node, r) != 0.0f;
 }
-}
+
 
 std::vector<float> WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
-    QueryAST ast = parse_query(tokens);
+    QueryAST ast;
+    try {
+        ast = parse_query(tokens);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
+    }
+
+    std::unordered_set<std::string> cols;
+    for (const auto &c : table_.columns) cols.insert(c.name);
+
+    auto validate_ctx = [&](const ASTNode *node, const std::string &ctx) {
+        if (!node) return;
+        try {
+            validate_ast(node, cols);
+        } catch (const std::exception &e) {
+            throw std::runtime_error(ctx + ": " + e.what());
+        }
+    };
+
+    for (const auto &expr : ast.select_list) {
+        validate_ctx(expr.get(), "SELECT clause");
+    }
+    if (ast.join) {
+        validate_ctx(ast.join->condition.get(), "JOIN condition");
+    }
+    if (ast.where) {
+        validate_ctx(ast.where.value().get(), "WHERE clause");
+    }
+    if (ast.group_by) {
+        for (const auto &k : ast.group_by->keys) {
+            validate_ctx(k.get(), "GROUP BY");
+        }
+    }
+    if (ast.order_by) {
+        validate_ctx(ast.order_by->expr.get(), "ORDER BY");
+    }
 
     std::vector<float> result;
 
     if (ast.group_by) {
         auto *agg = dynamic_cast<AggregationNode *>(ast.select_list[0].get());
+
         if (!agg) throw std::runtime_error("Only aggregation queries supported with GROUP BY");
 
         float *d_vals; int *d_keys; int *d_count;
@@ -261,6 +245,71 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
         if (ast.order_by) {
             jit_sort_pairs(d_keys, d_vals, h_count, ast.order_by->ascending);
+
+        for (const auto &r : rows) {
+            int key = static_cast<int>(eval_node(ast.group_by->keys[0].get(), r));
+            float val = 0.0f;
+            if (agg && agg->agg != AggregationType::Count) {
+                val = eval_node(agg->expr.get(), r);
+            }
+            auto &g = groups[key];
+            if (!g.init) { g.min = g.max = val; g.init = true; }
+            g.sum += val;
+            g.count += 1.0;
+            g.min = std::min(g.min, (double)val);
+            g.max = std::max(g.max, (double)val);
+        }
+
+        auto eval_having_node = [&](const ASTNode *node, const AggData &gd) -> float {
+            if (auto c = dynamic_cast<const ConstantNode *>(node)) {
+                return std::stof(c->value);
+            }
+            if (auto b = dynamic_cast<const BinaryOpNode *>(node)) {
+                float l = eval_having_node(b->left.get(), gd);
+                float r = eval_having_node(b->right.get(), gd);
+                const std::string &op = b->op;
+                if (op == "+") return l + r;
+                if (op == "-") return l - r;
+                if (op == "*") return l * r;
+                if (op == "/") return l / r;
+                if (op == ">") return l > r;
+                if (op == "<") return l < r;
+                if (op == ">=") return l >= r;
+                if (op == "<=") return l <= r;
+                if (op == "==") return l == r;
+                if (op == "!=") return l != r;
+            }
+            if (auto ag = dynamic_cast<const AggregationNode *>(node)) {
+                switch (ag->agg) {
+                case AggregationType::Sum: return gd.sum;
+                case AggregationType::Avg: return gd.sum / gd.count;
+                case AggregationType::Count: return gd.count;
+                case AggregationType::Min: return gd.min;
+                case AggregationType::Max: return gd.max;
+                }
+
+            }
+            return 0.0f;
+        };
+
+
+        auto eval_having = [&](const AggData &gd) -> bool {
+            if (!ast.having) return true;
+            return eval_having_node(ast.having.value().get(), gd) != 0.0f;
+        };
+
+        for (const auto &kv : groups) {
+            const AggData &g = kv.second;
+            if (!eval_having(g)) continue;
+
+            switch (agg->agg) {
+            case AggregationType::Sum: result.push_back(g.sum); break;
+            case AggregationType::Avg: result.push_back(g.sum / g.count); break;
+            case AggregationType::Count: result.push_back(g.count); break;
+            case AggregationType::Min: result.push_back(g.min); break;
+            case AggregationType::Max: result.push_back(g.max); break;
+            }
+
         }
 
         std::vector<float> h_vals(h_count);
@@ -276,15 +325,42 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         jit_compile_and_launch(expr_code, "", table_.d_price, table_.d_quantity,
                                d_out, table_.num_rows);
 
+
         if (ast.order_by && expr_code == ast.order_by->expr->to_cuda_expr()) {
             jit_sort_float(d_out, table_.num_rows, ast.order_by->ascending);
+
+    if (ast.distinct) {
+        std::vector<float> tmp = result;
+        std::sort(tmp.begin(), tmp.end());
+        tmp.erase(std::unique(tmp.begin(), tmp.end()), tmp.end());
+        result.swap(tmp);
+    }
+
+    if (ast.order_by) {
+        std::vector<std::pair<float,float>> keyed;
+        for (size_t i=0;i<result.size();++i) {
+            Row tmp{rows[i].price, rows[i].quantity};
+            float key = eval_node(ast.order_by->expr.get(), tmp);
+            keyed.push_back({key, result[i]});
+
         }
+
 
         result.resize(table_.num_rows);
         cudaMemcpy(result.data(), d_out, sizeof(float)*table_.num_rows, cudaMemcpyDeviceToHost);
         cudaFree(d_out);
 
         if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size())
+
+    if (ast.offset) {
+        size_t off = static_cast<size_t>(ast.offset->count);
+        if (off >= result.size()) result.clear();
+        else result.erase(result.begin(), result.begin() + off);
+    }
+
+    if (ast.limit) {
+        if (static_cast<size_t>(ast.limit->count) < result.size())
+
             result.resize(ast.limit->count);
     }
 
