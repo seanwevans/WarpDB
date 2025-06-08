@@ -415,7 +415,7 @@ int main(int argc, char **argv) {
   for (auto &col : table.columns) {
     cudaFree(col.device_ptr);
   }
-
+#endif
 
   return 0;
 }
