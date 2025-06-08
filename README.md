@@ -14,8 +14,9 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
   interoperability with Pandas, PyTorch, and Spark
 - **Arrow Results**: Retrieve query results as Arrow buffers for easy sharing
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
-- **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
+- **Column Statistics & Optimizer**: Collect min/max/null counts and use them for filter elimination and kernel fusion
 - **Improved Error Handling**: Validates queries and surfaces parsing errors clearly
+
 
 
 ## Architecture
@@ -211,5 +212,4 @@ WarpDB implements several CUDA kernels:
 
 - Support for more SQL features (JOINs, GROUP BY, ORDER BY)
 - Support for more data sources and formats
-- Query optimization based on data statistics
 - Multi-GPU support for larger datasets

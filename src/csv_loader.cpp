@@ -26,6 +26,23 @@
     } \
   } while (0)
 
+namespace {
+TableStats compute_stats(const HostTable &host) {
+  TableStats stats;
+  if (!host.price.empty()) {
+    auto [min_it, max_it] = std::minmax_element(host.price.begin(), host.price.end());
+    stats.price.min = *min_it;
+    stats.price.max = *max_it;
+  }
+  if (!host.quantity.empty()) {
+    auto [min_it, max_it] = std::minmax_element(host.quantity.begin(), host.quantity.end());
+    stats.quantity.min = *min_it;
+    stats.quantity.max = *max_it;
+  }
+  return stats;
+}
+} // namespace
+
 HostTable load_csv_to_host(const std::string &filepath) {
   std::ifstream file(filepath);
   if (!file.is_open()) {
@@ -81,6 +98,7 @@ Table upload_to_gpu(const HostTable &host, const std::vector<DataType> &schema) 
   table.d_quantity = d_quantity;
   table.num_rows = N;
   table.columns = {price_desc, qty_desc};
+  table.stats = compute_stats(host);
   (void)schema; // schema currently unused
   return table;
 }
