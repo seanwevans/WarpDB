@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <memory>
 
+
 namespace {
 // Recursively validate that all variable references exist in the table.
 void validate_ast(const ASTNode *node,
