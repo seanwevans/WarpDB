@@ -13,7 +13,7 @@ struct Token {
 
 std::vector<Token> tokenize(const std::string &input);
 
-enum class ASTNodeType { Constant, Variable, BinaryOp, Aggregation };
+enum class ASTNodeType { Constant, Variable, BinaryOp, FunctionCall, Aggregation };
 
 
 struct ASTNode {
@@ -90,6 +90,11 @@ struct AggregationNode : public ASTNode {
   ASTNodeType type() const override { return ASTNodeType::Aggregation; }
 };
 
+struct OrderByClause {
+  ASTNodePtr expr;
+  bool ascending;
+};
+
 struct WindowFunctionNode : public ASTNode {
   AggregationType agg;
   ASTNodePtr expr;
@@ -99,10 +104,6 @@ struct WindowFunctionNode : public ASTNode {
       : agg(a), expr(std::move(e)) {}
   std::string to_cuda_expr() const override { return "<window>"; }
   ASTNodeType type() const override { return ASTNodeType::Aggregation; }
-};
-struct OrderByClause {
-  ASTNodePtr expr;
-  bool ascending;
 };
 
 struct JoinClause {

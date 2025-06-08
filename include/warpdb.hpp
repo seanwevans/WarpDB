@@ -3,12 +3,14 @@
 #include <vector>
 
 #include "csv_loader.hpp"
+#include "json_loader.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
+#include "arrow_utils.hpp"
 
 class WarpDB {
 public:
-    explicit WarpDB(const std::string &csv_path);
+    explicit WarpDB(const std::string &filepath);
     ~WarpDB();
 
     // Execute an expression with optional WHERE clause.
@@ -18,6 +20,14 @@ public:
     // Execute a full SQL query supporting GROUP BY and ORDER BY.
     // Currently JOIN loads the same table for demonstration purposes.
     std::vector<float> query_sql(const std::string &sql);
+
+    // Execute a query and export the results as Arrow buffers.
+    // The ArrowArray and ArrowSchema must be provided by the caller.
+    // When use_shared_memory is true, the result buffer is created in
+    // POSIX shared memory so other processes can access it.
+    void query_arrow(const std::string &expr, ArrowArray *out_array,
+                     ArrowSchema *out_schema, bool use_shared_memory = false);
+
 
 private:
     Table table_;

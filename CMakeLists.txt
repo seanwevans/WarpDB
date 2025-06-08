@@ -21,6 +21,7 @@ include_directories(include)
 set(WARPDB_SRC
     src/main.cu
     src/csv_loader.cpp
+    src/json_loader.cpp
     src/arrow_loader.cpp
     src/expression.cpp
     src/jit.cpp
@@ -81,8 +82,10 @@ add_test(NAME sql_features_test COMMAND sql_features_test)
 add_library(warpdb_lib STATIC
     src/warpdb.cpp
     src/csv_loader.cpp
+    src/json_loader.cpp
     src/expression.cpp
     src/jit.cpp
+    src/arrow_utils.cpp
 )
 set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)

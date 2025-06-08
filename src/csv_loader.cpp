@@ -26,6 +26,23 @@
     } \
   } while (0)
 
+namespace {
+TableStats compute_stats(const HostTable &host) {
+  TableStats stats;
+  if (!host.price.empty()) {
+    auto [min_it, max_it] = std::minmax_element(host.price.begin(), host.price.end());
+    stats.price.min = *min_it;
+    stats.price.max = *max_it;
+  }
+  if (!host.quantity.empty()) {
+    auto [min_it, max_it] = std::minmax_element(host.quantity.begin(), host.quantity.end());
+    stats.quantity.min = *min_it;
+    stats.quantity.max = *max_it;
+  }
+  return stats;
+}
+} // namespace
+
 HostTable load_csv_to_host(const std::string &filepath) {
   std::ifstream file(filepath);
   if (!file.is_open()) {
@@ -81,9 +98,12 @@ Table upload_to_gpu(const HostTable &host, const std::vector<DataType> &schema) 
   table.d_quantity = d_quantity;
   table.num_rows = N;
   table.columns = {price_desc, qty_desc};
+  table.stats = compute_stats(host);
   (void)schema; // schema currently unused
   return table;
 }
+
+Table upload_to_gpu(const HostTable &host) { return upload_to_gpu(host, {}); }
 
 Table load_csv_to_gpu(const std::string &filepath, const std::vector<DataType> &schema) {
 #ifdef USE_ARROW
@@ -102,4 +122,32 @@ Table load_csv_to_gpu(const std::string &filepath, const std::vector<DataType> &
 
 Table load_csv_to_gpu(const std::string &filepath) {
   return load_csv_to_gpu(filepath, {});
+}
+
+HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished) {
+  std::vector<float> prices;
+  std::vector<int> quantities;
+  prices.reserve(max_rows);
+  quantities.reserve(max_rows);
+
+  std::string line;
+  int count = 0;
+  while (count < max_rows && std::getline(stream, line)) {
+    if (line.empty())
+      continue;
+    std::istringstream ss(line);
+    std::string price_str, qty_str;
+    std::getline(ss, price_str, ',');
+    std::getline(ss, qty_str, ',');
+    prices.push_back(std::stof(price_str));
+    quantities.push_back(std::stoi(qty_str));
+    ++count;
+  }
+
+  finished = !stream.good();
+
+  HostTable chunk;
+  chunk.price = std::move(prices);
+  chunk.quantity = std::move(quantities);
+  return chunk;
 }
