@@ -9,6 +9,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Expression Parsing & Code Generation**: Parse SQL-like expressions and automatically generate optimized CUDA code
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
+- **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
 
 ## Architecture
 
