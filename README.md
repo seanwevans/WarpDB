@@ -285,3 +285,7 @@ The project has recently gained several improvements:
 - Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY, LIMIT, HAVING, and OFFSET
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
+
+## License
+
+WarpDB is licensed under the [Apache License 2.0](LICENSE).
