@@ -11,9 +11,13 @@ int main(){
     auto res = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity ORDER BY quantity ASC");
 
     HostTable h = load_csv_to_host("data/test.csv");
+    const HostColumn *price_col = h.get_column("price");
+    const HostColumn *qty_col = h.get_column("quantity");
+    const auto &prices_vec = std::get<std::vector<float>>(price_col->data);
+    const auto &qty_vec = std::get<std::vector<int32_t>>(qty_col->data);
     std::map<int,double> groups;
-    for(size_t i=0;i<h.price.size();++i){
-        groups[h.quantity[i]] += h.price[i];
+    for(size_t i=0;i<prices_vec.size();++i){
+        groups[qty_vec[i]] += prices_vec[i];
     }
     std::vector<float> expected;
     for(auto &kv : groups) expected.push_back(static_cast<float>(kv.second));
@@ -22,7 +26,7 @@ int main(){
     for(size_t i=0;i<res.size();++i) assert(std::abs(res[i]-expected[i])<1e-5);
 
     auto limited = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 2");
-    std::vector<float> prices = h.price;
+    std::vector<float> prices = prices_vec;
     std::sort(prices.begin(), prices.end(), std::greater<float>());
     assert(limited.size() == 2);
 
