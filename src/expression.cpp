@@ -443,18 +443,6 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
   }
 
 
-  if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
-      tokens[pos].value == "HAVING") {
-    pos++;
-    size_t start = pos;
-    while (pos < tokens.size() &&
-           !(tokens[pos].type == TokenType::Keyword &&
-             (tokens[pos].value == "ORDER" || tokens[pos].value == "LIMIT")))
-      pos++;
-    std::vector<Token> hv(tokens.begin() + start, tokens.begin() + pos);
-    hv.push_back({TokenType::End, ""});
-    query.having = parse_expression(hv);
-  }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
 
@@ -469,6 +457,8 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     std::vector<Token> hv(tokens.begin() + start, tokens.begin() + pos);
     hv.push_back({TokenType::End, ""});
     query.having = parse_expression(hv);
+    if (pos == tokens.size())
+      end = pos;
   }
 
   if (pos < tokens.size() && tokens[pos].type == TokenType::Keyword &&
@@ -520,6 +510,7 @@ QueryAST parse_query(const std::vector<Token> &tokens) {
     OffsetClause oc{std::stoi(tokens[pos].value)};
     pos++;
     query.offset = oc;
+  }
 
   if (pos != end) {
     throw std::runtime_error("Unexpected token in query near: " +
