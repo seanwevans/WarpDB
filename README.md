@@ -14,6 +14,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Arrow Columnar Format**: Optionally load data using Apache Arrow for zero-copy
   interoperability with Pandas, PyTorch, and Spark
 - **Arrow Results**: Retrieve query results as Arrow buffers for easy sharing
+  (optionally using a custom shared memory name)
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
 - **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
 - **Multi-GPU Execution**: Robust support for running queries across multiple GPUs, including streaming large CSV files
@@ -145,8 +146,9 @@ db = pywarpdb.WarpDB("data/test.csv")  # or data/test.json
 result = db.query("price * quantity WHERE price > 10")
 print(result)
 
-# Export result as an Arrow array
-arr_capsule, schema_capsule = db.query_arrow("price * quantity")
+# Export result as an Arrow array stored in shared memory
+arr_capsule, schema_capsule = db.query_arrow(
+    "price * quantity", shared_memory=True, shm_name="/my_result")
 import pyarrow as pa
 arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 ```

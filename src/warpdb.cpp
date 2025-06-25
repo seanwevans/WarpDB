@@ -498,10 +498,11 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
 }
 
 void WarpDB::query_arrow(const std::string &expr, ArrowArray *out_array,
-                         ArrowSchema *out_schema, bool use_shared_memory) {
+                         ArrowSchema *out_schema, bool use_shared_memory,
+                         const char* shm_name) {
     auto result = query(expr);
     export_to_arrow(result.data(), static_cast<int64_t>(result.size()),
-                    use_shared_memory, out_array, out_schema);
+                    use_shared_memory, out_array, out_schema, shm_name);
 
 }
 

@@ -16,21 +16,24 @@ PYBIND11_MODULE(pywarpdb, m) {
                     py::arg("rows_per_chunk") = 1000000,
                     R"pbdoc(Stream a CSV file in chunks across all GPUs and return results.)pbdoc")
         .def("query_arrow",
-             [](WarpDB &db, const std::string &expr, bool shared_memory) {
-                 auto arr = new ArrowArray();
-                 auto schema = new ArrowSchema();
-                 db.query_arrow(expr, arr, schema, shared_memory);
-                 py::capsule array_capsule(arr, [](void *ptr) {
-                     ArrowArray *arr = reinterpret_cast<ArrowArray *>(ptr);
-                     if (arr->release) arr->release(arr);
-                 });
-                 py::capsule schema_capsule(schema, [](void *ptr) {
-                     ArrowSchema *schema = reinterpret_cast<ArrowSchema *>(ptr);
-                     if (schema->release) schema->release(schema);
-                 });
-                 return py::make_tuple(array_capsule, schema_capsule);
-             },
+             [](WarpDB &db, const std::string &expr, bool shared_memory,
+                const std::string &shm_name) {
+                auto arr = new ArrowArray();
+                auto schema = new ArrowSchema();
+                 db.query_arrow(expr, arr, schema, shared_memory,
+                                shm_name.c_str());
+                py::capsule array_capsule(arr, [](void *ptr) {
+                    ArrowArray *arr = reinterpret_cast<ArrowArray *>(ptr);
+                    if (arr->release) arr->release(arr);
+                });
+                py::capsule schema_capsule(schema, [](void *ptr) {
+                    ArrowSchema *schema = reinterpret_cast<ArrowSchema *>(ptr);
+                    if (schema->release) schema->release(schema);
+                });
+                return py::make_tuple(array_capsule, schema_capsule);
+            },
              py::arg("expr"), py::arg("shared_memory") = false,
+             py::arg("shm_name") = "/warpdb_result",
              R"pbdoc(Return result as Arrow C Data Interface capsules.
 
 The returned tuple contains (ArrowArray capsule, ArrowSchema capsule).

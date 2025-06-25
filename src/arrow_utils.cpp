@@ -35,14 +35,15 @@ static void release_arrow_schema(struct ArrowSchema* schema) {
 }
 
 void export_to_arrow(const float* data, int64_t length, bool use_shared_memory,
-                     ArrowArray* out_array, ArrowSchema* out_schema) {
+                     ArrowArray* out_array, ArrowSchema* out_schema,
+                     const char* shm_name) {
     if (!out_array || !out_schema) throw std::invalid_argument("Null output");
     ArrowBufferInfo* info = new ArrowBufferInfo();
     info->size = sizeof(float) * length;
     info->shared = use_shared_memory;
 
     if (use_shared_memory) {
-        info->name = "/warpdb_result";
+        info->name = shm_name ? shm_name : "/warpdb_result";
         info->fd = shm_open(info->name.c_str(), O_CREAT | O_RDWR, 0600);
         if (info->fd < 0) {
             delete info;
