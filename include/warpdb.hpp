@@ -37,9 +37,11 @@ public:
     // Execute a query and export the results as Arrow buffers.
     // The ArrowArray and ArrowSchema must be provided by the caller.
     // When use_shared_memory is true, the result buffer is created in
-    // POSIX shared memory so other processes can access it.
+    // POSIX shared memory so other processes can access it.  The name of
+    // the shared memory region can be customized with `shm_name`.
     void query_arrow(const std::string &expr, ArrowArray *out_array,
-                     ArrowSchema *out_schema, bool use_shared_memory = false);
+                     ArrowSchema *out_schema, bool use_shared_memory = false,
+                     const char* shm_name = "/warpdb_result");
 
 
 private:
