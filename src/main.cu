@@ -118,17 +118,18 @@ __global__ void project_revenue_and_adjusted(float *price, int *quantity,
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    std::cerr << "Usage: ./warpdb \"<expression>\" [data_file]\n";
-    return 1;
-  }
-  std::string user_query = argv[1];
-  std::string csv_path = "data/test.csv";
-  if (argc >= 3)
-    csv_path = argv[2];
-  std::string upper_query = user_query;
-  for (auto &c : upper_query)
-    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  try {
+    if (argc < 2) {
+      std::cerr << "Usage: ./warpdb \"<expression>\" [data_file]\n";
+      return 1;
+    }
+    std::string user_query = argv[1];
+    std::string csv_path = "data/test.csv";
+    if (argc >= 3)
+      csv_path = argv[2];
+    std::string upper_query = user_query;
+    for (auto &c : upper_query)
+      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
   std::string expr_part = user_query;
   std::string where_part;
@@ -381,5 +382,9 @@ int main(int argc, char **argv) {
     cudaFree(col.device_ptr);
   }
 
-  return 0;
+    return 0;
+  } catch (const std::exception &e) {
+    std::cerr << "Error: " << e.what() << "\n";
+    return 1;
+  }
 }

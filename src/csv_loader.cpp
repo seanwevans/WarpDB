@@ -18,12 +18,12 @@
 #include <arrow/cuda/api.h>
 #endif
 
-#define CUDA_CHECK(err) \
-  do { \
-    if (err != cudaSuccess) { \
-      std::cerr << "CUDA Error: " << cudaGetErrorString(err) << "\n"; \
-      exit(1); \
-    } \
+#define CUDA_CHECK(err)                                                       \
+  do {                                                                       \
+    if ((err) != cudaSuccess) {                                              \
+      throw std::runtime_error(std::string("CUDA Error: ") +                 \
+                               cudaGetErrorString(err));                     \
+    }                                                                        \
   } while (0)
 
 namespace {

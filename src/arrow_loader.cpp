@@ -14,12 +14,12 @@
 #include <arrow/adapters/orc/adapter.h>
 #include <cuda_runtime.h>
 
-#define CUDA_CHECK(err) \
-  do { \
-    if (err != cudaSuccess) { \
-      std::cerr << "CUDA Error: " << cudaGetErrorString(err) << "\n"; \
-      exit(1); \
-    } \
+#define CUDA_CHECK(err)                                                       \
+  do {                                                                       \
+    if ((err) != cudaSuccess) {                                              \
+      throw std::runtime_error(std::string("CUDA Error: ") +                 \
+                               cudaGetErrorString(err));                     \
+    }                                                                        \
   } while (0)
 
 ArrowTable load_csv_arrow(const std::string &filepath) {
