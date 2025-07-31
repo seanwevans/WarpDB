@@ -10,13 +10,116 @@ float parse_constant(const std::string &val) {
     return std::stof(val);
 }
 
-void analyze_condition(const ASTNode *, const TableStats &,
+} // namespace
+
+void analyze_condition(const ASTNode *node, const TableStats &stats,
                        bool &always_true, bool &always_false) {
     always_true = false;
     always_false = false;
-}
+    if (!node)
+        return;
 
-} // namespace
+    if (auto bin = dynamic_cast<const BinaryOpNode *>(node)) {
+        // Handle logical operators by recursively analyzing children
+        if (bin->op == "&&" || bin->op == "||") {
+            bool l_true = false, l_false = false;
+            bool r_true = false, r_false = false;
+            analyze_condition(bin->left.get(), stats, l_true, l_false);
+            analyze_condition(bin->right.get(), stats, r_true, r_false);
+
+            if (bin->op == "&&") {
+                if (l_false || r_false)
+                    always_false = true;
+                if (l_true && r_true)
+                    always_true = true;
+            } else { // ||
+                if (l_true || r_true)
+                    always_true = true;
+                if (l_false && r_false)
+                    always_false = true;
+            }
+            return;
+        }
+
+        // Check for comparisons between a column and a constant
+        const VariableNode *var = nullptr;
+        const ConstantNode *cnst = nullptr;
+        bool var_left = true;
+
+        if (bin->left->type() == ASTNodeType::Variable &&
+            bin->right->type() == ASTNodeType::Constant) {
+            var = static_cast<const VariableNode *>(bin->left.get());
+            cnst = static_cast<const ConstantNode *>(bin->right.get());
+        } else if (bin->left->type() == ASTNodeType::Constant &&
+                   bin->right->type() == ASTNodeType::Variable) {
+            var = static_cast<const VariableNode *>(bin->right.get());
+            cnst = static_cast<const ConstantNode *>(bin->left.get());
+            var_left = false;
+        }
+
+        if (var && cnst) {
+            float c = parse_constant(cnst->value);
+            float min = 0.0f, max = 0.0f;
+            bool known = true;
+
+            if (var->name == "price") {
+                min = stats.price.min;
+                max = stats.price.max;
+            } else if (var->name == "quantity") {
+                min = static_cast<float>(stats.quantity.min);
+                max = static_cast<float>(stats.quantity.max);
+            } else {
+                known = false;
+            }
+
+            if (known) {
+                std::string op = bin->op;
+                if (!var_left) {
+                    if (op == ">")
+                        op = "<";
+                    else if (op == "<")
+                        op = ">";
+                    else if (op == ">=")
+                        op = "<=";
+                    else if (op == "<=")
+                        op = ">=";
+                }
+
+                if (op == ">") {
+                    if (min > c)
+                        always_true = true;
+                    else if (max <= c)
+                        always_false = true;
+                } else if (op == ">=") {
+                    if (min >= c)
+                        always_true = true;
+                    else if (max < c)
+                        always_false = true;
+                } else if (op == "<") {
+                    if (max < c)
+                        always_true = true;
+                    else if (min >= c)
+                        always_false = true;
+                } else if (op == "<=") {
+                    if (max <= c)
+                        always_true = true;
+                    else if (min > c)
+                        always_false = true;
+                } else if (op == "==" || op == "=") {
+                    if (min == max && min == c)
+                        always_true = true;
+                    else if (c < min || c > max)
+                        always_false = true;
+                } else if (op == "!=") {
+                    if (min == max && min == c)
+                        always_false = true;
+                    else if (c < min || c > max)
+                        always_true = true;
+                }
+            }
+        }
+    }
+}
 
 void execute_query_optimized(const std::string &expr_part,
                              const std::string &where_part, Table &table) {
