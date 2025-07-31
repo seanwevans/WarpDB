@@ -5,12 +5,12 @@
 #include <sstream>
 #include <stdexcept>
 
-#define CUDA_CHECK(err) \
-  do { \
-    if (err != cudaSuccess) { \
-      std::cerr << "CUDA Error: " << cudaGetErrorString(err) << "\n"; \
-      exit(1); \
-    } \
+#define CUDA_CHECK(err)                                                       \
+  do {                                                                       \
+    if ((err) != cudaSuccess) {                                              \
+      throw std::runtime_error(std::string("CUDA Error: ") +                 \
+                               cudaGetErrorString(err));                     \
+    }                                                                        \
   } while (0)
 
 HostTable load_json_to_host(const std::string &filepath) {
