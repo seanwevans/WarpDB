@@ -115,6 +115,14 @@ add_executable(jit_arch_test
 target_link_libraries(jit_arch_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_arch_test COMMAND jit_arch_test)
 
+add_executable(optimizer_test
+    tests/optimizer_test.cpp
+    src/expression.cpp
+    src/optimizer.cpp
+)
+target_link_libraries(optimizer_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
+add_test(NAME optimizer_test COMMAND optimizer_test)
+
 add_library(warpdb_lib STATIC
     src/warpdb.cpp
     src/csv_loader.cpp
