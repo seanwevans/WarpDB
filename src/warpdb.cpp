@@ -418,19 +418,16 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
         result.resize(table_.num_rows);
         cudaMemcpy(result.data(), d_out, sizeof(float)*table_.num_rows, cudaMemcpyDeviceToHost);
         cudaFree(d_out);
+    }
 
-        if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size())
+    if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size()) {
+        result.resize(ast.limit->count);
+    }
 
     if (ast.offset) {
         size_t off = static_cast<size_t>(ast.offset->count);
         if (off >= result.size()) result.clear();
         else result.erase(result.begin(), result.begin() + off);
-    }
-
-    if (ast.limit) {
-        if (static_cast<size_t>(ast.limit->count) < result.size())
-
-            result.resize(ast.limit->count);
     }
 
     return result;
