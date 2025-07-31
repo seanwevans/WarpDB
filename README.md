@@ -74,8 +74,8 @@ in your environment.
 mkdir build
 cd build
 cmake ..  # CMake will locate the CUDA toolkit automatically
-# Arrow and pybind11 are discovered via `find_package` when installed
-# Use -DWARPDB_BUILD_PYTHON=OFF to skip the Python bindings
+# Arrow support is optional and enabled only when its libraries are found
+# Use -DWARPDB_BUILD_PYTHON=OFF to skip building the Python bindings
 make
 ```
 
@@ -120,23 +120,33 @@ You can then invoke the function in a query:
 
 ### Python API
 
+WarpDB ships optional Python bindings powered by `pybind11`.
+Ensure `pybind11` is installed and build the module with CMake:
 
-You can also use WarpDB directly from Python if `pybind11` is available.
-Install the bindings with `pip`, which will compile the `pywarpdb` extension:
+```bash
+mkdir build
+cd build
+cmake .. -DWARPDB_BUILD_PYTHON=ON  # default
+make pywarpdb
+```
+
+Apache Arrow is optional; when present, results can be exchanged as Arrow
+arrays. To skip building the Python bindings entirely, configure CMake with
+`-DWARPDB_BUILD_PYTHON=OFF`.
+
+You can also install the module directly from the source tree:
 
 ```bash
 pip install .
 ```
 
-You can also build a wheel for redistribution:
+Or build a wheel for redistribution:
 
 ```bash
 pip wheel . -w dist
 ```
 
-You can also use WarpDB directly from Python when the optional bindings are
-enabled.  They are built automatically when `pybind11` is present and
-`-DWARPDB_BUILD_PYTHON=ON` (the default) is passed to CMake:
+With the bindings installed you can query data directly from Python:
 
 
 ```python
