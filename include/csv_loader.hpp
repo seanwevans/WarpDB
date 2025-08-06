@@ -12,6 +12,11 @@
 
 enum class DataType { Int32, Int64, Float32, Float64, String };
 
+// Policy for handling conversion errors when parsing CSV values.
+// Strict mode throws on any malformed numeric field, while Permissive mode
+// logs the error and substitutes a default value.
+enum class ParsePolicy { Strict, Permissive };
+
 struct ColumnDesc {
   std::string name;
   DataType type;
@@ -51,7 +56,8 @@ struct Table {
 };
 
 Table load_csv_to_gpu(const std::string &filepath,
-                      const std::vector<DataType> &schema = {});
+                      const std::vector<DataType> &schema = {},
+                      ParsePolicy policy = ParsePolicy::Strict);
 
 using ColumnData = std::variant<std::vector<int32_t>, std::vector<int64_t>,
                                 std::vector<float>, std::vector<double>,
@@ -78,10 +84,12 @@ struct HostTable {
 };
 
 HostTable load_csv_to_host(const std::string &filepath,
-                           const std::vector<DataType> &schema = {});
+                           const std::vector<DataType> &schema = {},
+                           ParsePolicy policy = ParsePolicy::Strict);
 Table upload_to_gpu(const HostTable &table);
 
 // Load at most `max_rows` CSV rows from an open input stream. `finished`
 // will be set to true when no more rows are available.
-HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished);
+HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
+                         ParsePolicy policy = ParsePolicy::Strict);
 
