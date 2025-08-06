@@ -272,6 +272,9 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     }
     ++count;
   }
-  finished = !stream.good();
+  if (stream.fail() && !stream.eof()) {
+    throw std::runtime_error("Error reading CSV: partial line or I/O error");
+  }
+  finished = stream.peek() == EOF;
   return table;
 }

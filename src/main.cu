@@ -42,8 +42,6 @@ void run_multi_gpu_jit_large(const std::string &csv_path,
   std::vector<float> all_results;
   while (!finished) {
     HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished);
-    if (chunk.num_rows() == 0)
-      break;
     auto part = run_multi_gpu_jit_host(chunk, expr_cuda, cond_cuda);
     all_results.insert(all_results.end(), part.begin(), part.end());
   }
