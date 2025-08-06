@@ -1,22 +1,26 @@
 #include "multi_gpu_utils.hpp"
-#include <cuda_runtime.h>
+#include "cuda_utils.hpp"
 #include <algorithm>
 
+// All CUDA runtime calls are wrapped in CUDA_CHECK, which throws
+// std::runtime_error on failure. This allows errors to propagate to callers
+// for handling while keeping this function's control flow simple.
 std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
                                           const std::string &expr_cuda,
                                           const std::string &cond_cuda) {
     int device_count = 0;
-    cudaGetDeviceCount(&device_count);
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
     if (device_count < 2) {
         Table dtab = upload_to_gpu(host);
         float *d_out;
-        cudaMalloc(&d_out, sizeof(float) * host.num_rows());
+        CUDA_CHECK(cudaMalloc(&d_out, sizeof(float) * host.num_rows()));
         jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out, 0);
         std::vector<float> result(host.num_rows());
-        cudaMemcpy(result.data(), d_out, sizeof(float) * host.num_rows(),
-                   cudaMemcpyDeviceToHost);
-        cudaFree(d_out);
-        for (auto &c : dtab.columns) cudaFree(c.device_ptr);
+        CUDA_CHECK(cudaMemcpy(result.data(), d_out, sizeof(float) * host.num_rows(),
+                              cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaFree(d_out));
+        for (auto &c : dtab.columns)
+            CUDA_CHECK(cudaFree(c.device_ptr));
         return result;
     }
 
@@ -44,19 +48,21 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
                 sub.columns[i].data = std::vector<int32_t>(vec.begin()+start, vec.begin()+end);
             }
         }
-        cudaSetDevice(dev);
+        CUDA_CHECK(cudaSetDevice(dev));
         Table dtab = upload_to_gpu(sub);
 
         float *d_out;
-        cudaMalloc(&d_out, sizeof(float) * local_N);
+        CUDA_CHECK(cudaMalloc(&d_out, sizeof(float) * local_N));
 
         jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out, dev);
 
-        cudaMemcpy(results.data() + start, d_out, sizeof(float) * local_N,
-                   cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(results.data() + start, d_out,
+                              sizeof(float) * local_N,
+                              cudaMemcpyDeviceToHost));
 
-        cudaFree(d_out);
-        for (auto &c : dtab.columns) cudaFree(c.device_ptr);
+        CUDA_CHECK(cudaFree(d_out));
+        for (auto &c : dtab.columns)
+            CUDA_CHECK(cudaFree(c.device_ptr));
     }
 
     return results;

@@ -10,4 +10,3 @@
       throw std::runtime_error(std::string("CUDA Error: ") + cudaGetErrorString(err)); \
     } \
   } while (0)
-
