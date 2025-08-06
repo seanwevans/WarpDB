@@ -47,7 +47,8 @@ size_t dtype_size(DataType t) {
 } // namespace
 
 HostTable load_csv_to_host(const std::string &filepath,
-                           const std::vector<DataType> &schema) {
+                           const std::vector<DataType> &schema,
+                           ParsePolicy policy) {
   std::ifstream file(filepath);
   if (!file.is_open()) {
     std::cerr << "Failed to open file: " << filepath << std::endl;
@@ -92,9 +93,11 @@ HostTable load_csv_to_host(const std::string &filepath,
   }
 
   std::string line;
+  int row = 0;
   while (std::getline(file, line)) {
     if (line.empty())
       continue;
+    ++row;
     std::stringstream ss(line);
     std::string value;
     for (size_t i = 0; i < names.size(); ++i) {
@@ -102,16 +105,60 @@ HostTable load_csv_to_host(const std::string &filepath,
       HostColumn &col = host.columns[i];
       switch (col.type) {
       case DataType::Int32:
-        std::get<std::vector<int32_t>>(col.data).push_back(std::stoi(value));
+        try {
+          std::get<std::vector<int32_t>>(col.data).push_back(std::stoi(value));
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to parse int32 value '" << value
+                    << "' at row " << row << " column '" << col.name
+                    << "': " << e.what() << std::endl;
+          if (policy == ParsePolicy::Permissive) {
+            std::get<std::vector<int32_t>>(col.data).push_back(0);
+          } else {
+            throw;
+          }
+        }
         break;
       case DataType::Int64:
-        std::get<std::vector<int64_t>>(col.data).push_back(std::stoll(value));
+        try {
+          std::get<std::vector<int64_t>>(col.data).push_back(std::stoll(value));
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to parse int64 value '" << value
+                    << "' at row " << row << " column '" << col.name
+                    << "': " << e.what() << std::endl;
+          if (policy == ParsePolicy::Permissive) {
+            std::get<std::vector<int64_t>>(col.data).push_back(0);
+          } else {
+            throw;
+          }
+        }
         break;
       case DataType::Float32:
-        std::get<std::vector<float>>(col.data).push_back(std::stof(value));
+        try {
+          std::get<std::vector<float>>(col.data).push_back(std::stof(value));
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to parse float value '" << value
+                    << "' at row " << row << " column '" << col.name
+                    << "': " << e.what() << std::endl;
+          if (policy == ParsePolicy::Permissive) {
+            std::get<std::vector<float>>(col.data).push_back(0.0f);
+          } else {
+            throw;
+          }
+        }
         break;
       case DataType::Float64:
-        std::get<std::vector<double>>(col.data).push_back(std::stod(value));
+        try {
+          std::get<std::vector<double>>(col.data).push_back(std::stod(value));
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to parse double value '" << value
+                    << "' at row " << row << " column '" << col.name
+                    << "': " << e.what() << std::endl;
+          if (policy == ParsePolicy::Permissive) {
+            std::get<std::vector<double>>(col.data).push_back(0.0);
+          } else {
+            throw;
+          }
+        }
         break;
       case DataType::String:
         std::get<std::vector<std::string>>(col.data).push_back(value);
@@ -161,7 +208,8 @@ Table upload_to_gpu(const HostTable &host) {
 }
 
 Table load_csv_to_gpu(const std::string &filepath,
-                      const std::vector<DataType> &schema) {
+                      const std::vector<DataType> &schema,
+                      ParsePolicy policy) {
 #ifdef USE_ARROW
   if (schema.empty()) {
     ArrowTable atable = load_csv_arrow(filepath);
@@ -175,15 +223,16 @@ Table load_csv_to_gpu(const std::string &filepath,
     return table;
   }
 #endif
-  HostTable host = load_csv_to_host(filepath, schema);
+  HostTable host = load_csv_to_host(filepath, schema, policy);
   return upload_to_gpu(host);
 }
 
 Table load_csv_to_gpu(const std::string &filepath) {
-  return load_csv_to_gpu(filepath, {});
+  return load_csv_to_gpu(filepath, {}, ParsePolicy::Strict);
 }
 
-HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished) {
+HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
+                         ParsePolicy policy) {
   std::string header;
   std::streampos pos = stream.tellg();
   if (!(stream >> header)) {
@@ -214,7 +263,19 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished) {
     std::string val;
     for (size_t i = 0; i < names.size(); ++i) {
       if (!std::getline(ss, val, ',')) val.clear();
-      std::get<std::vector<float>>(table.columns[i].data).push_back(std::stof(val));
+      try {
+        std::get<std::vector<float>>(table.columns[i].data).push_back(std::stof(val));
+      } catch (const std::exception &e) {
+        std::cerr << "Failed to parse float value '" << val
+                  << "' at row " << (count + 1) << " column '"
+                  << table.columns[i].name << "': " << e.what()
+                  << std::endl;
+        if (policy == ParsePolicy::Permissive) {
+          std::get<std::vector<float>>(table.columns[i].data).push_back(0.0f);
+        } else {
+          throw;
+        }
+      }
     }
     ++count;
   }
