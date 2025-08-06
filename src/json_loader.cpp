@@ -1,17 +1,10 @@
 #include "json_loader.hpp"
-#include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 
-#define CUDA_CHECK(err)                                                       \
-  do {                                                                       \
-    if ((err) != cudaSuccess) {                                              \
-      throw std::runtime_error(std::string("CUDA Error: ") +                 \
-                               cudaGetErrorString(err));                     \
-    }                                                                        \
-  } while (0)
+#include "cuda_utils.hpp"
 
 HostTable load_json_to_host(const std::string &filepath) {
   std::ifstream file(filepath);

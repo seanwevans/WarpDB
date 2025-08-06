@@ -2,12 +2,13 @@
 #ifdef USE_ARROW
 #include "arrow_loader.hpp"
 #endif
-#include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+
+#include "cuda_utils.hpp"
 
 #ifdef USE_ARROW
 #include <arrow/api.h>
@@ -17,14 +18,6 @@
 #include <arrow/util/logging.h>
 #include <arrow/cuda/api.h>
 #endif
-
-#define CUDA_CHECK(err)                                                       \
-  do {                                                                       \
-    if ((err) != cudaSuccess) {                                              \
-      throw std::runtime_error(std::string("CUDA Error: ") +                 \
-                               cudaGetErrorString(err));                     \
-    }                                                                        \
-  } while (0)
 
 namespace {
 
