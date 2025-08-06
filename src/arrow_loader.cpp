@@ -12,15 +12,8 @@
 #include <arrow/ipc/api.h>
 #include <parquet/arrow/reader.h>
 #include <arrow/adapters/orc/adapter.h>
-#include <cuda_runtime.h>
 
-#define CUDA_CHECK(err)                                                       \
-  do {                                                                       \
-    if ((err) != cudaSuccess) {                                              \
-      throw std::runtime_error(std::string("CUDA Error: ") +                 \
-                               cudaGetErrorString(err));                     \
-    }                                                                        \
-  } while (0)
+#include "cuda_utils.hpp"
 
 ArrowTable load_csv_arrow(const std::string &filepath) {
     auto input_res = arrow::io::ReadableFile::Open(filepath);

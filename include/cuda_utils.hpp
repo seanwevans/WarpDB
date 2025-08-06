@@ -44,4 +44,3 @@ public:
 private:
   T* ptr_;
 };
-
