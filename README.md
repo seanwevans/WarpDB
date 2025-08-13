@@ -271,6 +271,20 @@ WarpDB implements several CUDA kernels:
 - `project_revenue`: Calculates revenue (price × quantity)
 - `project_revenue_and_adjusted`: Calculates multiple expressions in one pass
 
+### Kernel Launch Error Handling
+
+All CUDA kernel launches should be immediately followed by an error check to
+surface misconfigurations early. The expected pattern is:
+
+```cpp
+my_kernel<<<grid, block>>>(args...);
+CUDA_CHECK(cudaGetLastError());
+CUDA_CHECK(cudaDeviceSynchronize()); // retain for debugging when needed
+```
+
+`cudaDeviceSynchronize` calls help catch runtime errors during development and
+should remain where explicitly added for debugging.
+
 ## Development Progress
 
 The project has recently gained several improvements:
