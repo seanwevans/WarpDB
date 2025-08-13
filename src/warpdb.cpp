@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include <map>
+#include <unordered_map>
 #include <utility>
 #include "arrow_loader.hpp"
 #include "multi_gpu_utils.hpp"
@@ -231,20 +232,12 @@ bool eval_condition(const ASTNode *node, const Row &r) {
     return eval_node(node, r) != 0.0f;
 }
 
+} // namespace
 
+// Helper utilities for query_sql
+namespace {
 
-std::vector<float> WarpDB::query_sql(const std::string &sql) {
-    auto tokens = tokenize(sql);
-    QueryAST ast;
-    try {
-        ast = parse_query(tokens);
-    } catch (const std::exception &e) {
-        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
-    }
-
-    std::unordered_set<std::string> cols;
-    for (const auto &c : table_.columns) cols.insert(c.name);
-
+void validate_query_ast(const QueryAST &ast, const std::unordered_set<std::string> &cols) {
     auto validate_ctx = [&](const ASTNode *node, const std::string &ctx) {
         if (!node) return;
         try {
@@ -257,8 +250,8 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     for (const auto &expr : ast.select_list) {
         validate_ctx(expr.get(), "SELECT clause");
     }
-    if (ast.join) {
-        validate_ctx(ast.join->condition.get(), "JOIN condition");
+    for (const auto &j : ast.joins) {
+        validate_ctx(j.condition.get(), "JOIN condition");
     }
     if (ast.where) {
         validate_ctx(ast.where.value().get(), "WHERE clause");
@@ -271,167 +264,182 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     if (ast.order_by) {
         validate_ctx(ast.order_by->expr.get(), "ORDER BY");
     }
+}
 
+std::vector<int> filter_rows(const QueryAST &ast, const HostTable &table) {
     std::vector<int> rows;
-    int N = host_table_.num_rows();
+    int N = table.num_rows();
     rows.reserve(N);
     for (int i = 0; i < N; ++i) {
         if (ast.where) {
-            if (!eval_condition(ast.where.value().get(), host_table_, i)) continue;
+            if (!eval_condition(ast.where.value().get(), table, i)) continue;
         }
         rows.push_back(i);
     }
+    return rows;
+}
 
+struct AggData {
+    double sum = 0.0;
+    double count = 0.0;
+    double min = 0.0;
+    double max = 0.0;
+    bool init = false;
+};
 
-    std::vector<float> result;
-
-    if (ast.group_by) {
-        auto *agg = dynamic_cast<AggregationNode *>(ast.select_list[0].get());
-
-
-        if (!agg) throw std::runtime_error("Only aggregation queries supported with GROUP BY");
-
-        float *d_vals; int *d_keys; int *d_count;
-        cudaMalloc(&d_vals, sizeof(float)*table_.num_rows);
-        cudaMalloc(&d_keys, sizeof(int)*table_.num_rows);
-        cudaMalloc(&d_count, sizeof(int));
-        cudaMemset(d_count, 0, sizeof(int));
-
-        std::string val_expr = agg->expr->to_cuda_expr();
-        std::string key_expr = ast.group_by->keys[0]->to_cuda_expr();
-        float *d_price = table_.get_column_ptr<float>("price");
-        int *d_quantity = table_.get_column_ptr<int>("quantity");
-        jit_group_sum(val_expr, key_expr, d_price, d_quantity,
-                      d_vals, d_keys, d_count, table_.num_rows);
-
-        int h_count = 0;
-        cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
-        if (ast.order_by) {
-            jit_sort_pairs(d_keys, d_vals, h_count, ast.order_by->ascending);
-
-        for (const auto &r : rows) {
-            int key = static_cast<int>(eval_node(ast.group_by->keys[0].get(), r));
-            float val = 0.0f;
-            if (agg && agg->agg != AggregationType::Count) {
-                val = eval_node(agg->expr.get(), host_table_, idx);
-            }
-            auto &g = groups[key];
-            if (!g.init) { g.min = g.max = val; g.init = true; }
-            g.sum += val;
-            g.count += 1.0;
-            g.min = std::min(g.min, (double)val);
-            g.max = std::max(g.max, (double)val);
-        }
-
-        auto eval_having_node = [&](const ASTNode *node, const AggData &gd) -> float {
-            if (auto c = dynamic_cast<const ConstantNode *>(node)) {
-                return std::stof(c->value);
-            }
-            if (auto b = dynamic_cast<const BinaryOpNode *>(node)) {
-                float l = eval_having_node(b->left.get(), gd);
-                float r = eval_having_node(b->right.get(), gd);
-                const std::string &op = b->op;
-                if (op == "+") return l + r;
-                if (op == "-") return l - r;
-                if (op == "*") return l * r;
-                if (op == "/") return l / r;
-                if (op == ">") return l > r;
-                if (op == "<") return l < r;
-                if (op == ">=") return l >= r;
-                if (op == "<=") return l <= r;
-                if (op == "==") return l == r;
-                if (op == "!=") return l != r;
-            }
-            if (auto ag = dynamic_cast<const AggregationNode *>(node)) {
-                switch (ag->agg) {
-                case AggregationType::Sum: return gd.sum;
-                case AggregationType::Avg: return gd.sum / gd.count;
-                case AggregationType::Count: return gd.count;
-                case AggregationType::Min: return gd.min;
-                case AggregationType::Max: return gd.max;
-                }
-
-            }
-            return 0.0f;
-        };
-
-
-        auto eval_having = [&](const AggData &gd) -> bool {
-            if (!ast.having) return true;
-            return eval_having_node(ast.having.value().get(), gd) != 0.0f;
-        };
-
-        for (const auto &kv : groups) {
-            const AggData &g = kv.second;
-            if (!eval_having(g)) continue;
-
-            switch (agg->agg) {
-            case AggregationType::Sum: result.push_back(g.sum); break;
-            case AggregationType::Avg: result.push_back(g.sum / g.count); break;
-            case AggregationType::Count: result.push_back(g.count); break;
-            case AggregationType::Min: result.push_back(g.min); break;
-            case AggregationType::Max: result.push_back(g.max); break;
-            }
-
-        }
-
-        std::vector<float> h_vals(h_count);
-        cudaMemcpy(h_vals.data(), d_vals, sizeof(float)*h_count, cudaMemcpyDeviceToHost);
-        cudaFree(d_vals); cudaFree(d_keys); cudaFree(d_count);
-
-        int limit = ast.limit ? std::min(ast.limit->count, h_count) : h_count;
-        for (int i=0;i<limit;i++) result.push_back(h_vals[i]);
-    } else {
-
-        float *d_out;
-        cudaMalloc(&d_out, sizeof(float)*table_.num_rows);
-        std::string expr_code = ast.select_list[0]->to_cuda_expr();
-        jit_compile_and_launch(expr_code, "", table_, d_out);
-
-
-        if (ast.order_by && expr_code == ast.order_by->expr->to_cuda_expr()) {
-            jit_sort_float(d_out, table_.num_rows, ast.order_by->ascending);
-        }
-
-        for (int idx : rows) {
-            result.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
+float eval_having_node(const ASTNode *node, const AggData &gd) {
+    if (auto c = dynamic_cast<const ConstantNode *>(node)) {
+        return std::stof(c->value);
+    }
+    if (auto b = dynamic_cast<const BinaryOpNode *>(node)) {
+        float l = eval_having_node(b->left.get(), gd);
+        float r = eval_having_node(b->right.get(), gd);
+        const std::string &op = b->op;
+        if (op == "+") return l + r;
+        if (op == "-") return l - r;
+        if (op == "*") return l * r;
+        if (op == "/") return l / r;
+        if (op == ">") return l > r;
+        if (op == "<") return l < r;
+        if (op == ">=") return l >= r;
+        if (op == "<=") return l <= r;
+        if (op == "==") return l == r;
+        if (op == "!=") return l != r;
+    }
+    if (auto ag = dynamic_cast<const AggregationNode *>(node)) {
+        switch (ag->agg) {
+        case AggregationType::Sum: return gd.sum;
+        case AggregationType::Avg: return gd.sum / gd.count;
+        case AggregationType::Count: return gd.count;
+        case AggregationType::Min: return gd.min;
+        case AggregationType::Max: return gd.max;
         }
     }
+    return 0.0f;
+}
 
+bool eval_having(const QueryAST &ast, const AggData &gd) {
+    if (!ast.having) return true;
+    return eval_having_node(ast.having.value().get(), gd) != 0.0f;
+}
 
-    if (ast.distinct) {
-        std::vector<float> tmp = result;
-        std::sort(tmp.begin(), tmp.end());
-        tmp.erase(std::unique(tmp.begin(), tmp.end()), tmp.end());
-        result.swap(tmp);
+std::vector<float> execute_group_by(const QueryAST &ast,
+                                    const HostTable &table,
+                                    const std::vector<int> &rows) {
+    auto *agg = dynamic_cast<AggregationNode *>(ast.select_list[0].get());
+    if (!agg) throw std::runtime_error("Only aggregation queries supported with GROUP BY");
+
+    std::unordered_map<int, AggData> groups;
+    for (int idx : rows) {
+        int key = static_cast<int>(eval_node(ast.group_by->keys[0].get(), table, idx));
+        float val = 1.0f;
+        if (agg->agg != AggregationType::Count) {
+            val = eval_node(agg->expr.get(), table, idx);
+        }
+        auto &g = groups[key];
+        if (!g.init) { g.min = g.max = val; g.init = true; }
+        g.sum += val;
+        g.count += 1.0;
+        g.min = std::min(g.min, static_cast<double>(val));
+        g.max = std::max(g.max, static_cast<double>(val));
+    }
+
+    std::vector<std::pair<float,float>> keyed;
+    for (const auto &kv : groups) {
+        const AggData &g = kv.second;
+        if (!eval_having(ast, g)) continue;
+
+        float out = 0.0f;
+        switch (agg->agg) {
+        case AggregationType::Sum: out = g.sum; break;
+        case AggregationType::Avg: out = g.sum / g.count; break;
+        case AggregationType::Count: out = g.count; break;
+        case AggregationType::Min: out = g.min; break;
+        case AggregationType::Max: out = g.max; break;
+        }
+        float key = static_cast<float>(kv.first);
+        keyed.push_back({key, out});
     }
 
     if (ast.order_by) {
-        std::vector<std::pair<float,float>> keyed;
-        for (size_t i=0;i<rows.size();++i) {
-            float key = eval_node(ast.order_by->expr.get(), host_table_, rows[i]);
-            keyed.push_back({key, result[i]});
-
-        }
-
-
-        result.resize(table_.num_rows);
-        cudaMemcpy(result.data(), d_out, sizeof(float)*table_.num_rows, cudaMemcpyDeviceToHost);
-        cudaFree(d_out);
+        std::sort(keyed.begin(), keyed.end(), [&](auto &a, auto &b) {
+            if (ast.order_by->ascending) return a.first < b.first;
+            return a.first > b.first;
+        });
     }
 
+    std::vector<float> result;
+    result.reserve(keyed.size());
+    for (auto &p : keyed) result.push_back(p.second);
+    return result;
+}
+
+void apply_order_by(const QueryAST &ast, const HostTable &table,
+                    const std::vector<int> &rows, std::vector<float> &result) {
+    std::vector<std::pair<float,float>> keyed;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        float key = eval_node(ast.order_by->expr.get(), table, rows[i]);
+        keyed.push_back({key, result[i]});
+    }
+    std::sort(keyed.begin(), keyed.end(), [&](auto &a, auto &b) {
+        if (ast.order_by->ascending) return a.first < b.first;
+        return a.first > b.first;
+    });
+    for (size_t i = 0; i < keyed.size(); ++i) {
+        result[i] = keyed[i].second;
+    }
+}
+
+void apply_limit_offset(const QueryAST &ast, std::vector<float> &result) {
     if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size()) {
         result.resize(ast.limit->count);
     }
-
     if (ast.offset) {
         size_t off = static_cast<size_t>(ast.offset->count);
         if (off >= result.size()) result.clear();
         else result.erase(result.begin(), result.begin() + off);
     }
+}
 
+} // namespace
+
+std::vector<float> WarpDB::query_sql(const std::string &sql) {
+    auto tokens = tokenize(sql);
+    QueryAST ast;
+    try {
+        ast = parse_query(tokens);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
+    }
+
+    std::unordered_set<std::string> cols;
+    for (const auto &c : table_.columns) cols.insert(c.name);
+    validate_query_ast(ast, cols);
+
+    std::vector<int> rows = filter_rows(ast, host_table_);
+
+    std::vector<float> result;
+    if (ast.group_by) {
+        result = execute_group_by(ast, host_table_, rows);
+    } else {
+        for (int idx : rows) {
+            result.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
+        }
+        if (ast.order_by) {
+            apply_order_by(ast, host_table_, rows, result);
+        }
+    }
+
+    if (ast.distinct) {
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+    }
+
+    apply_limit_offset(ast, result);
     return result;
 }
+
+
 
 void WarpDB::query_arrow(const std::string &expr, ArrowArray *out_array,
                          ArrowSchema *out_schema, bool use_shared_memory,
