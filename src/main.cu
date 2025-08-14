@@ -152,7 +152,7 @@ int main(int argc, char **argv) {
   struct TableDeleter {
     void operator()(Table *t) const {
       if (!t) return;
-      for (auto &col : t->columns) cudaFree(col.device_ptr);
+      for (auto &col : t->columns) col.device_ptr.reset();
     }
   };
   std::unique_ptr<Table, TableDeleter> table_guard(&table);

@@ -9,6 +9,7 @@
 
 
 #include <variant>
+#include "cuda_utils.hpp"
 
 enum class DataType { Int32, Int64, Float32, Float64, String };
 
@@ -20,7 +21,7 @@ enum class ParsePolicy { Strict, Permissive };
 struct ColumnDesc {
   std::string name;
   DataType type;
-  void *device_ptr;
+  ColumnDevicePtr device_ptr;
   int length;
 };
 
@@ -49,7 +50,7 @@ struct Table {
   T *get_column_ptr(const std::string &name) const {
     for (const auto &col : columns) {
       if (col.name == name)
-        return static_cast<T *>(col.device_ptr);
+        return static_cast<T *>(col.device_ptr.get());
     }
     return nullptr;
   }
