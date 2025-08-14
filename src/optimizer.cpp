@@ -1,5 +1,6 @@
 #include "optimizer.hpp"
 #include "jit.hpp"
+#include <cuda_runtime.h>
 #include "cuda_utils.hpp"
 #include <iostream>
 #include <memory>
@@ -160,4 +161,6 @@ void execute_query_optimized(const std::string &expr_part,
     for (int i = 0; i < table.num_rows; ++i) {
         std::cout << "Result[" << i << "] = " << h_out[i] << "\n";
     }
+
+    delete[] h_out;
 }

@@ -7,6 +7,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -28,6 +30,7 @@
   } while (0)
 
 namespace {
+
 std::string cuda_type(DataType t) {
   switch (t) {
   case DataType::Int32:
@@ -43,7 +46,64 @@ std::string cuda_type(DataType t) {
   }
   return "void*";
 }
+
+struct CudaDeviceInfo {
+  CUdevice device;
+  std::string arch_flag;
+};
+
+const CudaDeviceInfo &initialize_cuda_device(int device_id) {
+  static std::once_flag init_flag;
+  std::call_once(init_flag, []() { CU_CHECK(cuInit(0)); });
+
+  static std::unordered_map<int, CudaDeviceInfo> cache;
+  auto it = cache.find(device_id);
+  if (it == cache.end()) {
+    CudaDeviceInfo info;
+    CU_CHECK(cuDeviceGet(&info.device, device_id));
+    int major = 0, minor = 0;
+    CU_CHECK(cuDeviceGetAttribute(
+        &major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, info.device));
+    CU_CHECK(cuDeviceGetAttribute(
+        &minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, info.device));
+    info.arch_flag = "--gpu-architecture=compute_" + std::to_string(major) +
+                     std::to_string(minor);
+    it = cache.emplace(device_id, info).first;
+  }
+  return it->second;
 }
+
+std::string compile_cuda_source(const std::string &src,
+                                const std::string &name,
+                                const std::string &arch_flag) {
+  struct NvrtcProgramGuard {
+    nvrtcProgram prog{nullptr};
+    ~NvrtcProgramGuard() {
+      if (prog)
+        nvrtcDestroyProgram(&prog);
+    }
+  } prog;
+
+  NVRTC_CHECK(nvrtcCreateProgram(&prog.prog, src.c_str(), name.c_str(), 0,
+                                 nullptr, nullptr));
+  const char *opts[] = {arch_flag.c_str()};
+  nvrtcResult compileResult = nvrtcCompileProgram(prog.prog, 1, opts);
+  size_t logSize;
+  nvrtcGetProgramLogSize(prog.prog, &logSize);
+  std::string log(logSize, '\0');
+  nvrtcGetProgramLog(prog.prog, &log[0]);
+  if (compileResult != NVRTC_SUCCESS) {
+    std::cerr << "NVRTC Compile Log:\n" << log << "\n";
+    throw std::runtime_error("Kernel compilation failed.");
+  }
+  size_t ptxSize;
+  NVRTC_CHECK(nvrtcGetPTXSize(prog.prog, &ptxSize));
+  std::string ptx(ptxSize, '\0');
+  NVRTC_CHECK(nvrtcGetPTX(prog.prog, &ptx[0]));
+  return ptx;
+}
+
+} // namespace
 
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
@@ -83,60 +143,13 @@ void jit_compile_and_launch(const std::string &expr_code,
                      body + "\n    }\n";
 
 
-  // Compile
-  // RAII wrapper to destroy the NVRTC program in all code paths.
-  // Fix: capture compile result and clean up before throwing on failure.
-  struct NvrtcProgramGuard {
-    nvrtcProgram prog{nullptr};
-    ~NvrtcProgramGuard() {
-      if (prog) {
-        nvrtcDestroyProgram(&prog); // ensure destruction on all paths
-      }
-    }
-  } prog;
-
-  NVRTC_CHECK(
-      nvrtcCreateProgram(&prog.prog, kernel.c_str(), "user_kernel.cu", 0,
-                         nullptr, nullptr));
-
-  // Determine the compute capability of the target device and compile
-  // for that architecture rather than a hard coded value.
-  CU_CHECK(cuInit(0));
-  CUdevice query_device;
-  CU_CHECK(cuDeviceGet(&query_device, device_id));
-  int major = 0, minor = 0;
-  CU_CHECK(cuDeviceGetAttribute(&major,
-                                CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
-                                query_device));
-  CU_CHECK(cuDeviceGetAttribute(&minor,
-                                CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
-                                query_device));
-  std::string arch_flag = "--gpu-architecture=compute_" +
-                          std::to_string(major) + std::to_string(minor);
-  const char *opts[] = {arch_flag.c_str()};
-  nvrtcResult compileResult = nvrtcCompileProgram(prog.prog, 1, opts);
-
-  size_t logSize;
-  nvrtcGetProgramLogSize(prog.prog, &logSize);
-  std::string log(logSize, '\0');
-  nvrtcGetProgramLog(prog.prog, &log[0]);
-  if (compileResult != NVRTC_SUCCESS) {
-    std::cerr << "NVRTC Compile Log:\n" << log << "\n";
-    // Explicitly destroy before throwing to avoid leaks
-    nvrtcDestroyProgram(&prog.prog);
-    prog.prog = nullptr;
-    throw std::runtime_error("Kernel compilation failed.");
-  }
-
-  size_t ptxSize;
-  NVRTC_CHECK(nvrtcGetPTXSize(prog.prog, &ptxSize));
-  std::string ptx(ptxSize, '\0');
-  NVRTC_CHECK(nvrtcGetPTX(prog.prog, &ptx[0]));
-  NVRTC_CHECK(nvrtcDestroyProgram(&prog.prog));
-  prog.prog = nullptr;
+  // Compile and initialize device
+  const auto &device = initialize_cuda_device(device_id);
+  std::string ptx =
+      compile_cuda_source(kernel, "user_kernel.cu", device.arch_flag);
 
   // Load to CUDA
-  CUdevice cuDevice;
+  CUdevice cuDevice = device.device;
   struct CuContextGuard {
     CUcontext ctx{nullptr};
     ~CuContextGuard() {
@@ -150,17 +163,19 @@ void jit_compile_and_launch(const std::string &expr_code,
     }
   } module;
   CUfunction kernel_func;
-  CU_CHECK(cuInit(0));
-  CU_CHECK(cuDeviceGet(&cuDevice, device_id));
   CU_CHECK(cuCtxCreate(&context.ctx, 0, cuDevice));
   CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "user_kernel"));
 
   // Launch
-  std::vector<void *> args;
+  std::vector<void *> column_ptrs;
+  column_ptrs.reserve(table.columns.size());
   for (const auto &c : table.columns) {
-    args.push_back(&c.device_ptr);
+    column_ptrs.push_back(c.device_ptr.get());
   }
+  std::vector<void *> args;
+  args.reserve(column_ptrs.size() + 2);
+  for (auto &p : column_ptrs) args.push_back(&p);
   args.push_back(&d_output);
   args.push_back(&N);
 
@@ -214,28 +229,10 @@ void jit_group_sum(const std::string &val_expr_code,
     }
   )";
 
-  struct NvrtcProgramGuard { nvrtcProgram prog{nullptr}; ~NvrtcProgramGuard(){ if(prog) nvrtcDestroyProgram(&prog);} } prog;
-  NVRTC_CHECK(nvrtcCreateProgram(&prog.prog, kernel.c_str(), "group.cu", 0, nullptr, nullptr));
+  const auto &device = initialize_cuda_device(device_id);
+  std::string ptx = compile_cuda_source(kernel, "group.cu", device.arch_flag);
 
-  CU_CHECK(cuInit(0));
-  CUdevice query_device; CU_CHECK(cuDeviceGet(&query_device, device_id));
-  int major=0, minor=0; CU_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, query_device));
-  CU_CHECK(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, query_device));
-  std::string arch_flag = "--gpu-architecture=compute_" + std::to_string(major) + std::to_string(minor);
-  const char* opts[] = { arch_flag.c_str() };
-  nvrtcResult compileResult = nvrtcCompileProgram(prog.prog, 1, opts);
-
-  size_t logSize; nvrtcGetProgramLogSize(prog.prog, &logSize);
-  std::string log(logSize, '\0'); nvrtcGetProgramLog(prog.prog, &log[0]);
-  if(compileResult != NVRTC_SUCCESS){ std::cerr << "NVRTC Compile Log:\n" << log << "\n"; nvrtcDestroyProgram(&prog.prog); prog.prog=nullptr; throw std::runtime_error("Kernel compilation failed."); }
-
-  size_t ptxSize; NVRTC_CHECK(nvrtcGetPTXSize(prog.prog, &ptxSize));
-  std::string ptx(ptxSize, '\0'); NVRTC_CHECK(nvrtcGetPTX(prog.prog, &ptx[0]));
-  NVRTC_CHECK(nvrtcDestroyProgram(&prog.prog)); prog.prog=nullptr;
-
-  CUdevice cuDevice; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx); }} context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod); }} module; CUfunction kernel_func;
-  CU_CHECK(cuInit(0));
-  CU_CHECK(cuDeviceGet(&cuDevice, device_id));
+  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx); }} context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod); }} module; CUfunction kernel_func;
   CU_CHECK(cuCtxCreate(&context.ctx, 0, cuDevice));
   CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "group_kernel"));
@@ -264,18 +261,11 @@ void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
     }
   )";
 
-  struct NvrtcProgramGuard{ nvrtcProgram prog{nullptr}; ~NvrtcProgramGuard(){ if(prog) nvrtcDestroyProgram(&prog);} } prog;
-  NVRTC_CHECK(nvrtcCreateProgram(&prog.prog, kernel.c_str(), "sort.cu", 0, nullptr, nullptr));
-  CU_CHECK(cuInit(0)); CUdevice query_device; CU_CHECK(cuDeviceGet(&query_device, device_id));
-  int major=0, minor=0; CU_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, query_device));
-  CU_CHECK(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, query_device));
-  std::string arch_flag = "--gpu-architecture=compute_" + std::to_string(major) + std::to_string(minor);
-  const char* opts[]={arch_flag.c_str()}; nvrtcResult compileResult = nvrtcCompileProgram(prog.prog,1,opts);
-  size_t logSize; nvrtcGetProgramLogSize(prog.prog,&logSize); std::string log(logSize,'\0'); nvrtcGetProgramLog(prog.prog,&log[0]);
-  if(compileResult!=NVRTC_SUCCESS){ std::cerr<<"NVRTC Compile Log:\n"<<log<<"\n"; nvrtcDestroyProgram(&prog.prog); prog.prog=nullptr; throw std::runtime_error("Kernel compilation failed."); }
-  size_t ptxSize; NVRTC_CHECK(nvrtcGetPTXSize(prog.prog,&ptxSize)); std::string ptx(ptxSize,'\0'); NVRTC_CHECK(nvrtcGetPTX(prog.prog,&ptx[0])); NVRTC_CHECK(nvrtcDestroyProgram(&prog.prog)); prog.prog=nullptr;
-  CUdevice cuDevice; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx);} } context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod);} } module; CUfunction func;
-  CU_CHECK(cuInit(0)); CU_CHECK(cuDeviceGet(&cuDevice, device_id)); CU_CHECK(cuCtxCreate(&context.ctx,0,cuDevice)); CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(),0,nullptr,nullptr)); CU_CHECK(cuModuleGetFunction(&func, module.mod, "sort_kernel"));
+  const auto &device = initialize_cuda_device(device_id);
+  std::string ptx =
+      compile_cuda_source(kernel, "sort.cu", device.arch_flag);
+  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx);} } context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod);} } module; CUfunction func;
+  CU_CHECK(cuCtxCreate(&context.ctx,0,cuDevice)); CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(),0,nullptr,nullptr)); CU_CHECK(cuModuleGetFunction(&func, module.mod, "sort_kernel"));
   int asc = ascending ? 1 : 0; std::vector<void*> args{&d_keys,&d_vals,&count,&asc};
   CU_CHECK(cuLaunchKernel(func,1,1,1,1,1,1,0,0,args.data(),nullptr)); CU_CHECK(cuCtxSynchronize());
 }
@@ -295,13 +285,10 @@ void jit_sort_float(float *d_vals, int count, bool ascending, int device_id) {
     }
   )";
 
-  struct NvrtcProgramGuard{ nvrtcProgram prog{nullptr}; ~NvrtcProgramGuard(){ if(prog) nvrtcDestroyProgram(&prog);} } prog;
-  NVRTC_CHECK(nvrtcCreateProgram(&prog.prog, kernel.c_str(), "sortf.cu",0,nullptr,nullptr));
-  CU_CHECK(cuInit(0)); CUdevice query_device; CU_CHECK(cuDeviceGet(&query_device, device_id)); int major=0, minor=0; CU_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, query_device)); CU_CHECK(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, query_device));
-  std::string arch_flag="--gpu-architecture=compute_"+std::to_string(major)+std::to_string(minor); const char* opts[]={arch_flag.c_str()}; nvrtcResult compileResult=nvrtcCompileProgram(prog.prog,1,opts);
-  size_t logSize; nvrtcGetProgramLogSize(prog.prog,&logSize); std::string log(logSize,'\0'); nvrtcGetProgramLog(prog.prog,&log[0]); if(compileResult!=NVRTC_SUCCESS){ std::cerr<<"NVRTC Compile Log:\n"<<log<<"\n"; nvrtcDestroyProgram(&prog.prog); prog.prog=nullptr; throw std::runtime_error("Kernel compilation failed."); }
-  size_t ptxSize; NVRTC_CHECK(nvrtcGetPTXSize(prog.prog,&ptxSize)); std::string ptx(ptxSize,'\0'); NVRTC_CHECK(nvrtcGetPTX(prog.prog,&ptx[0])); NVRTC_CHECK(nvrtcDestroyProgram(&prog.prog)); prog.prog=nullptr;
-  CUdevice cuDevice; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx);} } context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod);} } module; CUfunction func;
-  CU_CHECK(cuInit(0)); CU_CHECK(cuDeviceGet(&cuDevice, device_id)); CU_CHECK(cuCtxCreate(&context.ctx,0,cuDevice)); CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(),0,nullptr,nullptr)); CU_CHECK(cuModuleGetFunction(&func, module.mod, "sortf"));
+  const auto &device = initialize_cuda_device(device_id);
+  std::string ptx =
+      compile_cuda_source(kernel, "sortf.cu", device.arch_flag);
+  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx);} } context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod);} } module; CUfunction func;
+  CU_CHECK(cuCtxCreate(&context.ctx,0,cuDevice)); CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(),0,nullptr,nullptr)); CU_CHECK(cuModuleGetFunction(&func, module.mod, "sortf"));
   int asc=ascending?1:0; std::vector<void*> args{&d_vals,&count,&asc}; CU_CHECK(cuLaunchKernel(func,1,1,1,1,1,1,0,0,args.data(),nullptr)); CU_CHECK(cuCtxSynchronize());
 }

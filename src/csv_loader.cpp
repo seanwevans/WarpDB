@@ -7,6 +7,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <charconv>
+#include <system_error>
 
 #include "cuda_utils.hpp"
 
@@ -97,62 +99,82 @@ HostTable load_csv_to_host(const std::string &filepath,
       if (!std::getline(ss, value, ',')) value.clear();
       HostColumn &col = host.columns[i];
       switch (col.type) {
-      case DataType::Int32:
-        try {
-          std::get<std::vector<int32_t>>(col.data).push_back(std::stoi(value));
-        } catch (const std::exception &e) {
+      case DataType::Int32: {
+        int32_t parsed = 0;
+        auto [ptr, ec] =
+            std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse int32 value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<int32_t>>(col.data).push_back(0);
           } else {
-            throw;
+            throw std::runtime_error("Invalid int32");
           }
+        } else {
+          std::get<std::vector<int32_t>>(col.data).push_back(parsed);
         }
         break;
-      case DataType::Int64:
-        try {
-          std::get<std::vector<int64_t>>(col.data).push_back(std::stoll(value));
-        } catch (const std::exception &e) {
+      }
+      case DataType::Int64: {
+        int64_t parsed = 0;
+        auto [ptr, ec] =
+            std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse int64 value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<int64_t>>(col.data).push_back(0);
           } else {
-            throw;
+            throw std::runtime_error("Invalid int64");
           }
+        } else {
+          std::get<std::vector<int64_t>>(col.data).push_back(parsed);
         }
         break;
-      case DataType::Float32:
-        try {
-          std::get<std::vector<float>>(col.data).push_back(std::stof(value));
-        } catch (const std::exception &e) {
+      }
+      case DataType::Float32: {
+        float parsed = 0.0f;
+        auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(),
+                                         parsed, std::chars_format::general);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse float value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<float>>(col.data).push_back(0.0f);
           } else {
-            throw;
+            throw std::runtime_error("Invalid float");
           }
+        } else {
+          std::get<std::vector<float>>(col.data).push_back(parsed);
         }
         break;
-      case DataType::Float64:
-        try {
-          std::get<std::vector<double>>(col.data).push_back(std::stod(value));
-        } catch (const std::exception &e) {
+      }
+      case DataType::Float64: {
+        double parsed = 0.0;
+        auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(),
+                                         parsed, std::chars_format::general);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse double value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<double>>(col.data).push_back(0.0);
           } else {
-            throw;
+            throw std::runtime_error("Invalid double");
           }
+        } else {
+          std::get<std::vector<double>>(col.data).push_back(parsed);
         }
         break;
+      }
       case DataType::String:
         std::get<std::vector<std::string>>(col.data).push_back(value);
         break;
@@ -169,32 +191,37 @@ Table upload_to_gpu(const HostTable &host) {
 
   for (const auto &hcol : host.columns) {
     int N = host.num_rows();
-    void *d_ptr = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_ptr, dtype_size(hcol.type) * N));
+    ColumnDesc col;
+    col.name = hcol.name;
+    col.type = hcol.type;
+    col.length = N;
 
-    if (hcol.type == DataType::Int32) {
-      const auto &vec = std::get<std::vector<int32_t>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(int32_t) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::Int64) {
-      const auto &vec = std::get<std::vector<int64_t>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(int64_t) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::Float32) {
-      const auto &vec = std::get<std::vector<float>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(float) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::Float64) {
-      const auto &vec = std::get<std::vector<double>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(double) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::String) {
-      // string columns not supported on GPU yet
-      CUDA_CHECK(cudaFree(d_ptr));
-      d_ptr = nullptr;
+    if (hcol.type != DataType::String) {
+      void *d_ptr = nullptr;
+      CUDA_CHECK(cudaMalloc(&d_ptr, dtype_size(hcol.type) * N));
+      col.device_ptr.reset(d_ptr);
+
+      if (hcol.type == DataType::Int32) {
+        const auto &vec = std::get<std::vector<int32_t>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(int32_t) * N, cudaMemcpyHostToDevice));
+      } else if (hcol.type == DataType::Int64) {
+        const auto &vec = std::get<std::vector<int64_t>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(int64_t) * N, cudaMemcpyHostToDevice));
+      } else if (hcol.type == DataType::Float32) {
+        const auto &vec = std::get<std::vector<float>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(float) * N, cudaMemcpyHostToDevice));
+      } else if (hcol.type == DataType::Float64) {
+        const auto &vec = std::get<std::vector<double>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(double) * N, cudaMemcpyHostToDevice));
+      }
+      // string columns are left with nullptr device_ptr
     }
 
-    table.columns.push_back({hcol.name, hcol.type, d_ptr, N});
+    table.columns.push_back(std::move(col));
   }
 
   return table;

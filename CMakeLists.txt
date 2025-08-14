@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(CUDAToolkit REQUIRED)
 
 find_package(Arrow QUIET COMPONENTS cuda)
+find_package(nlohmann_json 3.2.0 REQUIRED)
 
 if(Arrow_FOUND)
     message(STATUS "Found Apache Arrow: ${Arrow_VERSION}")
@@ -46,9 +47,9 @@ set_target_properties(warpdb PROPERTIES
 
 
 if(Arrow_FOUND)
-    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver ${Arrow_LIBRARIES})
+    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver ${Arrow_LIBRARIES} nlohmann_json::nlohmann_json)
 else()
-    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
+    target_link_libraries(warpdb PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver nlohmann_json::nlohmann_json)
 endif()
 
 add_executable(expression_test
@@ -105,6 +106,11 @@ add_executable(csv_loader_error_test
 target_link_libraries(csv_loader_error_test PRIVATE warpdb_lib)
 add_test(NAME csv_loader_error_test COMMAND csv_loader_error_test)
 
+add_executable(json_loader_error_test
+    tests/json_loader_error_test.cpp)
+target_link_libraries(json_loader_error_test PRIVATE warpdb_lib)
+add_test(NAME json_loader_error_test COMMAND json_loader_error_test)
+
 
 add_executable(jit_error_test
     tests/jit_error_test.cpp
@@ -147,7 +153,7 @@ if(Arrow_FOUND)
     target_sources(warpdb_lib PRIVATE src/arrow_loader.cpp)
 endif()
 set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
+target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver nlohmann_json::nlohmann_json)
 
 
 option(WARPDB_BUILD_PYTHON "Build Python bindings with pybind11" ON)

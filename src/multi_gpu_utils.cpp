@@ -12,15 +12,12 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
     CUDA_CHECK(cudaGetDeviceCount(&device_count));
     if (device_count < 2) {
         Table dtab = upload_to_gpu(host);
-        float *d_out;
-        CUDA_CHECK(cudaMalloc(&d_out, sizeof(float) * host.num_rows()));
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out, 0);
+        DeviceBuffer<float> d_out(host.num_rows());
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out.get(), 0);
         std::vector<float> result(host.num_rows());
-        CUDA_CHECK(cudaMemcpy(result.data(), d_out, sizeof(float) * host.num_rows(),
+        CUDA_CHECK(cudaMemcpy(result.data(), d_out.get(),
+                              sizeof(float) * host.num_rows(),
                               cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaFree(d_out));
-        for (auto &c : dtab.columns)
-            CUDA_CHECK(cudaFree(c.device_ptr));
         return result;
     }
 
@@ -51,18 +48,13 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
         CUDA_CHECK(cudaSetDevice(dev));
         Table dtab = upload_to_gpu(sub);
 
-        float *d_out;
-        CUDA_CHECK(cudaMalloc(&d_out, sizeof(float) * local_N));
+        DeviceBuffer<float> d_out(local_N);
 
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out, dev);
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out.get(), dev);
 
-        CUDA_CHECK(cudaMemcpy(results.data() + start, d_out,
+        CUDA_CHECK(cudaMemcpy(results.data() + start, d_out.get(),
                               sizeof(float) * local_N,
                               cudaMemcpyDeviceToHost));
-
-        CUDA_CHECK(cudaFree(d_out));
-        for (auto &c : dtab.columns)
-            CUDA_CHECK(cudaFree(c.device_ptr));
     }
 
     return results;
