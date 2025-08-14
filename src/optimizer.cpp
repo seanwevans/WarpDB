@@ -1,8 +1,9 @@
 #include "optimizer.hpp"
 #include "jit.hpp"
-#include <cuda_runtime.h>
+#include "cuda_utils.hpp"
 #include <iostream>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -149,16 +150,14 @@ void execute_query_optimized(const std::string &expr_part,
         cond_cuda = cond_ast->to_cuda_expr();
     }
 
-    float *d_output;
-    cudaMalloc(&d_output, sizeof(float) * table.num_rows);
-    jit_compile_and_launch(expr_cuda, cond_cuda, table, d_output);
+    DeviceBuffer<float> d_output(table.num_rows);
+    jit_compile_and_launch(expr_cuda, cond_cuda, table, d_output.get());
 
-    float *h_out = new float[table.num_rows];
-    cudaMemcpy(h_out, d_output, sizeof(float) * table.num_rows,
-               cudaMemcpyDeviceToHost);
+    std::vector<float> h_out(table.num_rows);
+    CUDA_CHECK(cudaMemcpy(h_out.data(), d_output.get(),
+                          sizeof(float) * table.num_rows,
+                          cudaMemcpyDeviceToHost));
     for (int i = 0; i < table.num_rows; ++i) {
         std::cout << "Result[" << i << "] = " << h_out[i] << "\n";
     }
-    delete[] h_out;
-    cudaFree(d_output);
 }
