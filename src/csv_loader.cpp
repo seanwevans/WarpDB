@@ -7,6 +7,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
+#include <charconv>
+#include <system_error>
 
 #include "cuda_utils.hpp"
 
@@ -97,62 +99,82 @@ HostTable load_csv_to_host(const std::string &filepath,
       if (!std::getline(ss, value, ',')) value.clear();
       HostColumn &col = host.columns[i];
       switch (col.type) {
-      case DataType::Int32:
-        try {
-          std::get<std::vector<int32_t>>(col.data).push_back(std::stoi(value));
-        } catch (const std::exception &e) {
+      case DataType::Int32: {
+        int32_t parsed = 0;
+        auto [ptr, ec] =
+            std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse int32 value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<int32_t>>(col.data).push_back(0);
           } else {
-            throw;
+            throw std::runtime_error("Invalid int32");
           }
+        } else {
+          std::get<std::vector<int32_t>>(col.data).push_back(parsed);
         }
         break;
-      case DataType::Int64:
-        try {
-          std::get<std::vector<int64_t>>(col.data).push_back(std::stoll(value));
-        } catch (const std::exception &e) {
+      }
+      case DataType::Int64: {
+        int64_t parsed = 0;
+        auto [ptr, ec] =
+            std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse int64 value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<int64_t>>(col.data).push_back(0);
           } else {
-            throw;
+            throw std::runtime_error("Invalid int64");
           }
+        } else {
+          std::get<std::vector<int64_t>>(col.data).push_back(parsed);
         }
         break;
-      case DataType::Float32:
-        try {
-          std::get<std::vector<float>>(col.data).push_back(std::stof(value));
-        } catch (const std::exception &e) {
+      }
+      case DataType::Float32: {
+        float parsed = 0.0f;
+        auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(),
+                                         parsed, std::chars_format::general);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse float value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<float>>(col.data).push_back(0.0f);
           } else {
-            throw;
+            throw std::runtime_error("Invalid float");
           }
+        } else {
+          std::get<std::vector<float>>(col.data).push_back(parsed);
         }
         break;
-      case DataType::Float64:
-        try {
-          std::get<std::vector<double>>(col.data).push_back(std::stod(value));
-        } catch (const std::exception &e) {
+      }
+      case DataType::Float64: {
+        double parsed = 0.0;
+        auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(),
+                                         parsed, std::chars_format::general);
+        if (ec != std::errc() || ptr != value.data() + value.size()) {
+          std::error_code code = std::make_error_code(ec);
           std::cerr << "Failed to parse double value '" << value
                     << "' at row " << row << " column '" << col.name
-                    << "': " << e.what() << std::endl;
+                    << "': " << code.message() << std::endl;
           if (policy == ParsePolicy::Permissive) {
             std::get<std::vector<double>>(col.data).push_back(0.0);
           } else {
-            throw;
+            throw std::runtime_error("Invalid double");
           }
+        } else {
+          std::get<std::vector<double>>(col.data).push_back(parsed);
         }
         break;
+      }
       case DataType::String:
         std::get<std::vector<std::string>>(col.data).push_back(value);
         break;
