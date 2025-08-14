@@ -60,6 +60,7 @@ WarpDB consists of the following main components:
 - CUDA Toolkit 10.0 or higher
 - CMake 3.18 or higher
 - C++17 compatible compiler
+- [nlohmann/json](https://github.com/nlohmann/json) for JSON parsing
 - NVIDIA GPU with compute capability 7.0 or higher
 - [Optional] Apache Arrow with CUDA support for zero-copy columnar data
 - [Optional] `pybind11` to build the Python module (set `-DWARPDB_BUILD_PYTHON=ON`)

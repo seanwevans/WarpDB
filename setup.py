@@ -3,7 +3,7 @@ from setuptools import setup
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 
 include_files = glob('include/*.hpp') + glob('include/*.h')
-data_files = ['data/test.csv', 'data/test.json']
+data_files = ['data/test.csv', 'data/test.json', 'data/malformed.json']
 
 ext_modules = [
     Pybind11Extension(
