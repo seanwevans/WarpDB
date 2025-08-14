@@ -4,6 +4,7 @@
 #include "cuda_utils.hpp"
 #include <iostream>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -153,12 +154,13 @@ void execute_query_optimized(const std::string &expr_part,
     DeviceBuffer<float> d_output(table.num_rows);
     jit_compile_and_launch(expr_cuda, cond_cuda, table, d_output.get());
 
-    float *h_out = new float[table.num_rows];
-    CUDA_CHECK(cudaMemcpy(h_out, d_output.get(),
+    std::vector<float> h_out(table.num_rows);
+    CUDA_CHECK(cudaMemcpy(h_out.data(), d_output.get(),
                           sizeof(float) * table.num_rows,
                           cudaMemcpyDeviceToHost));
     for (int i = 0; i < table.num_rows; ++i) {
         std::cout << "Result[" << i << "] = " << h_out[i] << "\n";
     }
+
     delete[] h_out;
 }
