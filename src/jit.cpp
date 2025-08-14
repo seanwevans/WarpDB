@@ -157,10 +157,14 @@ void jit_compile_and_launch(const std::string &expr_code,
   CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "user_kernel"));
 
   // Launch
-  std::vector<void *> args;
+  std::vector<void *> column_ptrs;
+  column_ptrs.reserve(table.columns.size());
   for (const auto &c : table.columns) {
-    args.push_back(&c.device_ptr);
+    column_ptrs.push_back(c.device_ptr.get());
   }
+  std::vector<void *> args;
+  args.reserve(column_ptrs.size() + 2);
+  for (auto &p : column_ptrs) args.push_back(&p);
   args.push_back(&d_output);
   args.push_back(&N);
 

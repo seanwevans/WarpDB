@@ -1,5 +1,6 @@
 #include "warpdb.hpp"
 #include <cuda_runtime.h>
+#include "cuda_utils.hpp"
 #include <algorithm>
 #include <cctype>
 #include <iostream>
@@ -131,8 +132,7 @@ WarpDB::WarpDB(const std::string &filepath, const std::vector<DataType> &schema)
 
 WarpDB::~WarpDB() {
     for (auto &c : table_.columns) {
-        if (c.device_ptr)
-            cudaFree(c.device_ptr);
+        c.device_ptr.reset();
     }
 }
 
@@ -180,19 +180,14 @@ std::vector<float> WarpDB::query(const std::string &expr) {
         }
     }
 
-    float *d_output;
-    cudaMalloc(&d_output, sizeof(float) * table_.num_rows);
+    DeviceBuffer<float> d_output(table_.num_rows);
 
-    try {
-        jit_compile_and_launch(expr_cuda, condition_cuda, table_, d_output);
-    } catch (const std::exception &e) {
-        cudaFree(d_output);
-        throw;
-    }
+    jit_compile_and_launch(expr_cuda, condition_cuda, table_, d_output.get());
 
     std::vector<float> result(table_.num_rows);
-    cudaMemcpy(result.data(), d_output, sizeof(float) * table_.num_rows, cudaMemcpyDeviceToHost);
-    cudaFree(d_output);
+    CUDA_CHECK(cudaMemcpy(result.data(), d_output.get(),
+                         sizeof(float) * table_.num_rows,
+                         cudaMemcpyDeviceToHost));
     return result;
 }
 

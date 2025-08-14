@@ -25,7 +25,7 @@ public:
     }
   }
   ~DeviceBuffer() {
-    if (ptr_) cudaFree(ptr_);
+    if (ptr_) CUDA_CHECK(cudaFree(ptr_));
   }
   DeviceBuffer(const DeviceBuffer&) = delete;
   DeviceBuffer& operator=(const DeviceBuffer&) = delete;
@@ -34,7 +34,7 @@ public:
   }
   DeviceBuffer& operator=(DeviceBuffer&& other) noexcept {
     if (this != &other) {
-      if (ptr_) cudaFree(ptr_);
+      if (ptr_) CUDA_CHECK(cudaFree(ptr_));
       ptr_ = other.ptr_;
       other.ptr_ = nullptr;
     }
@@ -43,4 +43,35 @@ public:
   T* get() const { return ptr_; }
 private:
   T* ptr_;
+};
+
+// RAII wrapper for untyped device pointers used by Table columns.
+class ColumnDevicePtr {
+public:
+  ColumnDevicePtr() : ptr_(nullptr) {}
+  explicit ColumnDevicePtr(void* ptr) : ptr_(ptr) {}
+  ~ColumnDevicePtr() {
+    if (ptr_) CUDA_CHECK(cudaFree(ptr_));
+  }
+  ColumnDevicePtr(const ColumnDevicePtr&) = delete;
+  ColumnDevicePtr& operator=(const ColumnDevicePtr&) = delete;
+  ColumnDevicePtr(ColumnDevicePtr&& other) noexcept : ptr_(other.ptr_) {
+    other.ptr_ = nullptr;
+  }
+  ColumnDevicePtr& operator=(ColumnDevicePtr&& other) noexcept {
+    if (this != &other) {
+      reset();
+      ptr_ = other.ptr_;
+      other.ptr_ = nullptr;
+    }
+    return *this;
+  }
+  void* get() const { return ptr_; }
+  void reset(void* p = nullptr) {
+    if (ptr_) CUDA_CHECK(cudaFree(ptr_));
+    ptr_ = p;
+  }
+
+private:
+  void* ptr_;
 };

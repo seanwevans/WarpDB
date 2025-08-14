@@ -30,8 +30,6 @@ int main() {
     cudaMemcpy(&h_output, d_output, sizeof(float), cudaMemcpyDeviceToHost);
     assert(h_output == h_price);
 
-    cudaFree(d_price);
-    cudaFree(d_quantity);
     cudaFree(d_output);
     std::cout << "Architecture detection test passed\n";
     return 0;

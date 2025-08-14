@@ -32,8 +32,6 @@ int main() {
     }
     assert(!threw && "Second invocation failed");
 
-    cudaFree(price);
-    cudaFree(quantity);
     cudaFree(output);
     std::cout << "RAII test passed\n";
     return 0;

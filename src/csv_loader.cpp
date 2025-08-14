@@ -169,32 +169,37 @@ Table upload_to_gpu(const HostTable &host) {
 
   for (const auto &hcol : host.columns) {
     int N = host.num_rows();
-    void *d_ptr = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_ptr, dtype_size(hcol.type) * N));
+    ColumnDesc col;
+    col.name = hcol.name;
+    col.type = hcol.type;
+    col.length = N;
 
-    if (hcol.type == DataType::Int32) {
-      const auto &vec = std::get<std::vector<int32_t>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(int32_t) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::Int64) {
-      const auto &vec = std::get<std::vector<int64_t>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(int64_t) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::Float32) {
-      const auto &vec = std::get<std::vector<float>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(float) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::Float64) {
-      const auto &vec = std::get<std::vector<double>>(hcol.data);
-      CUDA_CHECK(cudaMemcpy(d_ptr, vec.data(), sizeof(double) * N,
-                            cudaMemcpyHostToDevice));
-    } else if (hcol.type == DataType::String) {
-      // string columns not supported on GPU yet
-      CUDA_CHECK(cudaFree(d_ptr));
-      d_ptr = nullptr;
+    if (hcol.type != DataType::String) {
+      void *d_ptr = nullptr;
+      CUDA_CHECK(cudaMalloc(&d_ptr, dtype_size(hcol.type) * N));
+      col.device_ptr.reset(d_ptr);
+
+      if (hcol.type == DataType::Int32) {
+        const auto &vec = std::get<std::vector<int32_t>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(int32_t) * N, cudaMemcpyHostToDevice));
+      } else if (hcol.type == DataType::Int64) {
+        const auto &vec = std::get<std::vector<int64_t>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(int64_t) * N, cudaMemcpyHostToDevice));
+      } else if (hcol.type == DataType::Float32) {
+        const auto &vec = std::get<std::vector<float>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(float) * N, cudaMemcpyHostToDevice));
+      } else if (hcol.type == DataType::Float64) {
+        const auto &vec = std::get<std::vector<double>>(hcol.data);
+        CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
+                              sizeof(double) * N, cudaMemcpyHostToDevice));
+      }
+      // string columns are left with nullptr device_ptr
     }
 
-    table.columns.push_back({hcol.name, hcol.type, d_ptr, N});
+    table.columns.push_back(std::move(col));
   }
 
   return table;
