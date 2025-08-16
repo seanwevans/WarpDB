@@ -21,7 +21,6 @@ FetchContent_Declare(
   GIT_TAG v3.2.0 # or a newer compatible version
 )
 FetchContent_MakeAvailable(nlohmann_json)
-find_package(nlohmann_json 3.2.0 REQUIRED)
 
 if(Arrow_FOUND)
     message(STATUS "Found Apache Arrow: ${Arrow_VERSION}")
