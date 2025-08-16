@@ -13,6 +13,14 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(CUDAToolkit REQUIRED)
 
 find_package(Arrow QUIET COMPONENTS cuda)
+
+include(FetchContent)
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.2.0 # or a newer compatible version
+)
+FetchContent_MakeAvailable(nlohmann_json)
 find_package(nlohmann_json 3.2.0 REQUIRED)
 
 if(Arrow_FOUND)
