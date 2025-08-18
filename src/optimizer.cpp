@@ -164,5 +164,4 @@ void execute_query_optimized(const std::string &expr_part,
         std::cout << "Result[" << i << "] = " << h_out[i] << "\n";
     }
 
-    delete[] h_out;
 }
