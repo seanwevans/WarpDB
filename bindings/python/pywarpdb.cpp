@@ -25,10 +25,12 @@ PYBIND11_MODULE(pywarpdb, m) {
                 py::capsule array_capsule(arr, [](void *ptr) {
                     ArrowArray *arr = reinterpret_cast<ArrowArray *>(ptr);
                     if (arr->release) arr->release(arr);
+                    delete arr;
                 });
                 py::capsule schema_capsule(schema, [](void *ptr) {
                     ArrowSchema *schema = reinterpret_cast<ArrowSchema *>(ptr);
                     if (schema->release) schema->release(schema);
+                    delete schema;
                 });
                 return py::make_tuple(array_capsule, schema_capsule);
             },
