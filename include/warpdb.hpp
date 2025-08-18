@@ -11,7 +11,8 @@
 class WarpDB {
 public:
     explicit WarpDB(const std::string &filepath,
-                    const std::vector<DataType> &schema = {});
+                    const std::vector<DataType> &schema = {},
+                    ParsePolicy policy = ParsePolicy::Strict);
     ~WarpDB();
 
     // Execute an expression with optional WHERE clause.

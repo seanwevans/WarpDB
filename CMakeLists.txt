@@ -123,6 +123,11 @@ add_executable(json_loader_error_test
 target_link_libraries(json_loader_error_test PRIVATE warpdb_lib)
 add_test(NAME json_loader_error_test COMMAND json_loader_error_test)
 
+add_executable(json_loader_permissive_test
+    tests/json_loader_permissive_test.cpp)
+target_link_libraries(json_loader_permissive_test PRIVATE warpdb_lib)
+add_test(NAME json_loader_permissive_test COMMAND json_loader_permissive_test)
+
 
 add_executable(jit_error_test
     tests/jit_error_test.cpp

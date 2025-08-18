@@ -7,7 +7,7 @@
 
 #include "cuda_utils.hpp"
 
-HostTable load_json_to_host(const std::string &filepath) {
+HostTable load_json_to_host(const std::string &filepath, ParsePolicy policy) {
   std::ifstream file(filepath);
   if (!file.is_open()) {
     std::cerr << "Failed to open file: " << filepath << std::endl;
@@ -34,13 +34,16 @@ HostTable load_json_to_host(const std::string &filepath) {
     } catch (const std::exception &e) {
       std::cerr << "Error parsing JSON line " << line_num << ": " << e.what()
                 << std::endl;
-      throw std::runtime_error("Failed to parse JSON line");
+      if (policy == ParsePolicy::Strict) {
+        throw std::runtime_error("Failed to parse JSON line");
+      }
+      // Permissive: continue without adding a row
     }
   }
   return host;
 }
 
-Table load_json_to_gpu(const std::string &filepath) {
-  HostTable host = load_json_to_host(filepath);
+Table load_json_to_gpu(const std::string &filepath, ParsePolicy policy) {
+  HostTable host = load_json_to_host(filepath, policy);
   return upload_to_gpu(host);
 }

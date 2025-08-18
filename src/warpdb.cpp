@@ -97,18 +97,19 @@ bool eval_condition(const ASTNode *node, const HostTable &table, int idx) {
 
 } // anonymous namespace
 
-WarpDB::WarpDB(const std::string &filepath, const std::vector<DataType> &schema) {
+WarpDB::WarpDB(const std::string &filepath, const std::vector<DataType> &schema,
+               ParsePolicy policy) {
     auto dot = filepath.find_last_of('.');
     std::string ext = dot == std::string::npos ? "" : filepath.substr(dot + 1);
     for (auto &c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     if (ext == "csv") {
-        table_ = load_csv_to_gpu(filepath, schema);
-        host_table_ = load_csv_to_host(filepath, schema);
+        table_ = load_csv_to_gpu(filepath, schema, policy);
+        host_table_ = load_csv_to_host(filepath, schema, policy);
     } else if (ext == "json") {
-        table_ = load_json_to_gpu(filepath);
+        table_ = load_json_to_gpu(filepath, policy);
 
-        host_table_ = load_json_to_host(filepath);
+        host_table_ = load_json_to_host(filepath, policy);
 
 #ifdef USE_ARROW
 
