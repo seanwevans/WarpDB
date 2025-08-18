@@ -5,7 +5,7 @@
 int main() {
   bool threw = false;
   try {
-    load_json_to_host("data/malformed.json");
+    load_json_to_host("data/malformed.json", ParsePolicy::Strict);
   } catch (const std::runtime_error &) {
     threw = true;
     std::cout << "Caught JSON parse error\n";
