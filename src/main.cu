@@ -339,7 +339,10 @@ int main(int argc, char **argv) {
   std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
 
 
-  jit_compile_and_launch(expr_cuda, condition_cuda, table, d_jit_output.get());
+  // Launch with block_size=0 so the kernel chooses an occupancy-based block
+  // configuration.
+  jit_compile_and_launch(expr_cuda, condition_cuda, table, d_jit_output.get(),
+                         0, 0);
 
   std::vector<float> h_jit_output(table.num_rows);
   CUDA_CHECK(cudaMemcpy(h_jit_output.data(), d_jit_output.get(),

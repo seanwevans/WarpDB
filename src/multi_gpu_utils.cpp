@@ -13,7 +13,8 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
     if (device_count < 2) {
         Table dtab = upload_to_gpu(host);
         DeviceBuffer<float> d_out(host.num_rows());
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out.get(), 0);
+        // Use block_size=0 to auto-select via occupancy.
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out.get(), 0, 0);
         std::vector<float> result(host.num_rows());
         CUDA_CHECK(cudaMemcpy(result.data(), d_out.get(),
                               sizeof(float) * host.num_rows(),
@@ -50,7 +51,8 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
 
         DeviceBuffer<float> d_out(local_N);
 
-        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out.get(), dev);
+        // Each device launches with block_size=0 for automatic selection.
+        jit_compile_and_launch(expr_cuda, cond_cuda, dtab, d_out.get(), dev, 0);
 
         CUDA_CHECK(cudaMemcpy(results.data() + start, d_out.get(),
                               sizeof(float) * local_N,

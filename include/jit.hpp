@@ -4,10 +4,14 @@
 
 // Compile the given expression and optional condition using NVRTC and launch
 // the generated kernel. Columns are provided via the Table descriptor.
+// Launches a JIT compiled kernel for the given expression and optional
+// condition. `block_size` specifies the CUDA block dimension; when set to 0 the
+// function selects a block size using `cuOccupancyMaxPotentialBlockSize`.
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
                             const Table &table,
-                            float *d_output, int device_id = 0);
+                            float *d_output, int device_id = 0,
+                            int block_size = 0);
 
 // JIT compile a kernel that groups rows by `key_expr_code` and sums
 // `val_expr_code`. The number of unique groups is written to d_count and

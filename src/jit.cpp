@@ -9,6 +9,7 @@
 #include <vector>
 #include <unordered_map>
 #include <mutex>
+#include <algorithm>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -108,7 +109,7 @@ std::string compile_cuda_source(const std::string &src,
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
                             const Table &table, float *d_output,
-                            int device_id) {
+                            int device_id, int block_size) {
 
   int N = table.num_rows;
 
@@ -179,8 +180,15 @@ void jit_compile_and_launch(const std::string &expr_code,
   args.push_back(&d_output);
   args.push_back(&N);
 
-  int threads = 128;
-  int blocks = (N + threads - 1) / threads;
+  // Determine launch configuration. If block_size is zero, choose an
+  // occupancy-optimised size using cuOccupancyMaxPotentialBlockSize.
+  int threads = block_size;
+  int minGridSize = 0;
+  if (threads <= 0) {
+    CU_CHECK(cuOccupancyMaxPotentialBlockSize(&minGridSize, &threads,
+                                              kernel_func, nullptr, 0, 0));
+  }
+  int blocks = std::max(minGridSize, (N + threads - 1) / threads);
   CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
                           args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
