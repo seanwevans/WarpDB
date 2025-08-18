@@ -283,18 +283,23 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     std::string val;
     for (size_t i = 0; i < names.size(); ++i) {
       if (!std::getline(ss, val, ',')) val.clear();
-      try {
-        std::get<std::vector<float>>(table.columns[i].data).push_back(std::stof(val));
-      } catch (const std::exception &e) {
+      float parsed = 0.0f;
+      auto [ptr, ec] =
+          std::from_chars(val.data(), val.data() + val.size(), parsed,
+                          std::chars_format::general);
+      if (ec != std::errc() || ptr != val.data() + val.size()) {
+        std::error_code code = std::make_error_code(ec);
         std::cerr << "Failed to parse float value '" << val
                   << "' at row " << (count + 1) << " column '"
-                  << table.columns[i].name << "': " << e.what()
+                  << table.columns[i].name << "': " << code.message()
                   << std::endl;
         if (policy == ParsePolicy::Permissive) {
           std::get<std::vector<float>>(table.columns[i].data).push_back(0.0f);
         } else {
-          throw;
+          throw std::runtime_error("Invalid float");
         }
+      } else {
+        std::get<std::vector<float>>(table.columns[i].data).push_back(parsed);
       }
     }
     ++count;
