@@ -182,7 +182,10 @@ std::vector<float> WarpDB::query(const std::string &expr) {
 
     DeviceBuffer<float> d_output(table_.num_rows);
 
-    jit_compile_and_launch(expr_cuda, condition_cuda, table_, d_output.get());
+    // block_size=0 lets jit_compile_and_launch pick an occupancy-optimised
+    // value.
+    jit_compile_and_launch(expr_cuda, condition_cuda, table_, d_output.get(), 0,
+                           0);
 
     std::vector<float> result(table_.num_rows);
     CUDA_CHECK(cudaMemcpy(result.data(), d_output.get(),

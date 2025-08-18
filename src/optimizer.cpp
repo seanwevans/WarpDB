@@ -152,7 +152,9 @@ void execute_query_optimized(const std::string &expr_part,
     }
 
     DeviceBuffer<float> d_output(table.num_rows);
-    jit_compile_and_launch(expr_cuda, cond_cuda, table, d_output.get());
+    // Pass 0 for block_size so jit_compile_and_launch selects an occupancy
+    // optimised configuration.
+    jit_compile_and_launch(expr_cuda, cond_cuda, table, d_output.get(), 0, 0);
 
     std::vector<float> h_out(table.num_rows);
     CUDA_CHECK(cudaMemcpy(h_out.data(), d_output.get(),
