@@ -95,7 +95,7 @@ std::string compile_cuda_source(const std::string &src,
   nvrtcGetProgramLog(prog.prog, &log[0]);
   if (compileResult != NVRTC_SUCCESS) {
     std::cerr << "NVRTC Compile Log:\n" << log << "\n";
-    throw std::runtime_error("Kernel compilation failed.");
+    throw std::runtime_error("Kernel compilation failed.\n" + log);
   }
   size_t ptxSize;
   NVRTC_CHECK(nvrtcGetPTXSize(prog.prog, &ptxSize));
