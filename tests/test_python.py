@@ -1,13 +1,28 @@
 import csv
 import pywarpdb
 
-db = pywarpdb.WarpDB("data/test.csv")
-result = db.query("price + 1")
+# Constructor with explicit schema and parse policy
+schema = [pywarpdb.DataType.Float32, pywarpdb.DataType.Int32]
+db = pywarpdb.WarpDB("data/test.csv", schema, pywarpdb.ParsePolicy.Strict)
 
+# Simple expression query
+result = db.query("price + 1")
 with open("data/test.csv", newline="") as f:
     reader = csv.DictReader(f)
     expected = [float(row["price"]) + 1 for row in reader]
-
 assert len(result) == len(expected)
 assert result == expected
+
+# SQL query
+sql_res = db.query_sql("SELECT price FROM test ORDER BY price ASC")
+with open("data/test.csv", newline="") as f:
+    reader = csv.DictReader(f)
+    expected_sql = sorted(float(row["price"]) for row in reader)
+assert sql_res == expected_sql
+
+# Permissive parse policy handles malformed rows
+malformed_schema = [pywarpdb.DataType.Float32, pywarpdb.DataType.Int32]
+db_perm = pywarpdb.WarpDB("data/malformed.csv", malformed_schema, pywarpdb.ParsePolicy.Permissive)
+perm_res = db_perm.query("price + quantity")
+assert perm_res == [11.5, 20.0, 2.5]
 
