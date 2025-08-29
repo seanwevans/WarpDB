@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <charconv>
 #include <system_error>
+#include <cstring>
 
 #include "cuda_utils.hpp"
 
@@ -218,7 +219,33 @@ Table upload_to_gpu(const HostTable &host) {
         CUDA_CHECK(cudaMemcpy(col.device_ptr.get(), vec.data(),
                               sizeof(double) * N, cudaMemcpyHostToDevice));
       }
-      // string columns are left with nullptr device_ptr
+    } else {
+      const auto &vec = std::get<std::vector<std::string>>(hcol.data);
+      std::vector<int32_t> offsets(N + 1, 0);
+      size_t total_chars = 0;
+      for (int i = 0; i < N; ++i) {
+        offsets[i] = static_cast<int32_t>(total_chars);
+        total_chars += vec[i].size();
+      }
+      offsets[N] = static_cast<int32_t>(total_chars);
+
+      std::vector<char> chars(total_chars);
+      for (int i = 0; i < N; ++i) {
+        std::memcpy(chars.data() + offsets[i], vec[i].data(), vec[i].size());
+      }
+
+      void *d_offsets = nullptr;
+      void *d_chars = nullptr;
+      CUDA_CHECK(cudaMalloc(&d_offsets, sizeof(int32_t) * (N + 1)));
+      CUDA_CHECK(cudaMalloc(&d_chars, total_chars));
+      CUDA_CHECK(cudaMemcpy(d_offsets, offsets.data(),
+                            sizeof(int32_t) * (N + 1), cudaMemcpyHostToDevice));
+      if (total_chars > 0) {
+        CUDA_CHECK(cudaMemcpy(d_chars, chars.data(), total_chars,
+                              cudaMemcpyHostToDevice));
+      }
+      col.device_ptr.reset(d_offsets);
+      col.string_data.reset(d_chars);
     }
 
     table.columns.push_back(std::move(col));

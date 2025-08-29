@@ -103,6 +103,12 @@ add_executable(extended_types_test
 target_link_libraries(extended_types_test PRIVATE warpdb_lib)
 add_test(NAME extended_types_test COMMAND extended_types_test)
 
+add_executable(string_column_query_test
+    tests/string_column_query_test.cpp
+)
+target_link_libraries(string_column_query_test PRIVATE warpdb_lib)
+add_test(NAME string_column_query_test COMMAND string_column_query_test)
+
 add_executable(cuda_error_handling_test
     tests/cuda_error_handling_test.cpp)
 target_link_libraries(cuda_error_handling_test PRIVATE warpdb_lib)
