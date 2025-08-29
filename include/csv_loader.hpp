@@ -21,7 +21,11 @@ enum class ParsePolicy { Strict, Permissive };
 struct ColumnDesc {
   std::string name;
   DataType type;
+  // For numeric columns, device_ptr points directly to the values array.
+  // For string columns, device_ptr stores the offsets buffer (int32_t[N+1])
+  // and string_data holds the concatenated character data.
   ColumnDevicePtr device_ptr;
+  ColumnDevicePtr string_data;
   int length;
 };
 
@@ -51,6 +55,16 @@ struct Table {
     for (const auto &col : columns) {
       if (col.name == name)
         return static_cast<T *>(col.device_ptr.get());
+    }
+    return nullptr;
+  }
+
+  // Returns the character buffer for the given string column, or nullptr if
+  // the column doesn't exist or isn't a string column.
+  const char *get_string_data(const std::string &name) const {
+    for (const auto &col : columns) {
+      if (col.name == name)
+        return static_cast<const char *>(col.string_data.get());
     }
     return nullptr;
   }
