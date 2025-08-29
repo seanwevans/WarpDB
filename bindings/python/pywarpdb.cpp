@@ -5,9 +5,25 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(pywarpdb, m) {
+    py::enum_<DataType>(m, "DataType")
+        .value("Int32", DataType::Int32)
+        .value("Int64", DataType::Int64)
+        .value("Float32", DataType::Float32)
+        .value("Float64", DataType::Float64)
+        .value("String", DataType::String);
+
+    py::enum_<ParsePolicy>(m, "ParsePolicy")
+        .value("Strict", ParsePolicy::Strict)
+        .value("Permissive", ParsePolicy::Permissive);
+
     py::class_<WarpDB>(m, "WarpDB")
-        .def(py::init<const std::string &>())
-        .def("query", &WarpDB::query)
+        .def(py::init<const std::string &, const std::vector<DataType>&, ParsePolicy>(),
+             py::arg("filepath"),
+             py::arg("schema") = std::vector<DataType>(),
+             py::arg("policy") = ParsePolicy::Strict)
+        .def("query", &WarpDB::query, py::arg("expr"))
+        .def("query_sql", &WarpDB::query_sql, py::arg("sql"),
+             R"pbdoc(Execute a full SQL query supporting GROUP BY and ORDER BY.)pbdoc")
         .def("query_multi_gpu", &WarpDB::query_multi_gpu,
              py::arg("expr"),
              R"pbdoc(Execute expression using all available GPUs on the current table.)pbdoc")
