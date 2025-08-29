@@ -23,6 +23,21 @@ int main() {
     assert(f64[0] == 2.0);
     assert(f64[1] == std::numeric_limits<double>::max());
 
+    // Numbers with surrounding whitespace
+    HostTable ws = load_csv_to_host("data/numeric_whitespace.csv", schema);
+    const auto &i32_ws = std::get<std::vector<int32_t>>(ws.columns[0].data);
+    const auto &i64_ws = std::get<std::vector<int64_t>>(ws.columns[1].data);
+    const auto &f32_ws = std::get<std::vector<float>>(ws.columns[2].data);
+    const auto &f64_ws = std::get<std::vector<double>>(ws.columns[3].data);
+    assert(i32_ws[0] == 42);
+    assert(i32_ws[1] == std::numeric_limits<int32_t>::max());
+    assert(i64_ws[0] == 43);
+    assert(i64_ws[1] == std::numeric_limits<int64_t>::max());
+    assert(f32_ws[0] == 1.0f);
+    assert(f32_ws[1] == std::numeric_limits<float>::max());
+    assert(f64_ws[0] == 2.0);
+    assert(f64_ws[1] == std::numeric_limits<double>::max());
+
     // Invalid strings should throw in strict mode
     bool threw_invalid = false;
     try {
