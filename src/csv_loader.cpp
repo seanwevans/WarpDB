@@ -12,6 +12,8 @@
 #if defined(__cpp_lib_unreachable)
 #include <utility>
 #endif
+#include <cctype>
+
 
 #include "cuda_utils.hpp"
 
@@ -104,6 +106,13 @@ HostTable load_csv_to_host(const std::string &filepath,
     std::string value;
     for (size_t i = 0; i < names.size(); ++i) {
       if (!std::getline(ss, value, ',')) value.clear();
+      value.erase(value.begin(),
+                  std::find_if(value.begin(), value.end(),
+                               [](unsigned char ch) { return !std::isspace(ch); }));
+      value.erase(std::find_if(value.rbegin(), value.rend(),
+                               [](unsigned char ch) { return !std::isspace(ch); })
+                      .base(),
+                  value.end());
       HostColumn &col = host.columns[i];
       switch (col.type) {
       case DataType::Int32: {
@@ -290,6 +299,13 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     std::string val;
     for (size_t i = 0; i < names.size(); ++i) {
       if (!std::getline(ss, val, ',')) val.clear();
+      val.erase(val.begin(),
+                std::find_if(val.begin(), val.end(),
+                             [](unsigned char ch) { return !std::isspace(ch); }));
+      val.erase(std::find_if(val.rbegin(), val.rend(),
+                             [](unsigned char ch) { return !std::isspace(ch); })
+                    .base(),
+                val.end());
       float parsed = 0.0f;
       auto [ptr, ec] =
           std::from_chars(val.data(), val.data() + val.size(), parsed,
