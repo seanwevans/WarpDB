@@ -9,7 +9,11 @@
 #include <algorithm>
 #include <charconv>
 #include <system_error>
+#if defined(__cpp_lib_unreachable)
+#include <utility>
+#endif
 #include <cctype>
+
 
 #include "cuda_utils.hpp"
 
@@ -37,7 +41,11 @@ size_t dtype_size(DataType t) {
   case DataType::String:
     return sizeof(char *); // unused for now
   }
-  return 0;
+#if defined(__cpp_lib_unreachable)
+  std::unreachable();
+#else
+  throw std::runtime_error("Unknown DataType");
+#endif
 }
 
 } // namespace
