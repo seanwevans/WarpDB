@@ -209,27 +209,6 @@ CSV file in chunks, enabling processing of datasets larger than a single GPU's
 memory. Results are aggregated back on the host.
 
 
-## Project Structure
-
-```
-├── CMakeLists.txt          # CMake build configuration
-├── data/                   # Sample data files
-│   ├── test.csv            # Test data
-│   └── test.json           # JSON test data
-├── include/                # Header files
-│   ├── csv_loader.hpp      # CSV loading interface
-│   ├── arrow_loader.hpp    # Parquet/Arrow/ORC loading interface
-│   ├── expression.hpp      # Expression parsing
-│   └── jit.hpp             # JIT compilation interface
-├── custom.cu               # User-provided CUDA functions (optional)
-└── src/                    # Source files
-    ├── csv_loader.cpp      # CSV loading implementation
-    ├── arrow_loader.cpp    # Columnar format loading implementation
-    ├── expression.cpp      # Expression parsing implementation
-    ├── jit.cpp             # JIT compilation implementation
-    └── main.cu             # Main application and CUDA kernels
-```
-
 ## How It Works
 
 1. **CSV Loading**: Input data is loaded from CSV files directly into GPU memory.
