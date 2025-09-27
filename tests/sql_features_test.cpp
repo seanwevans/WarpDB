@@ -35,8 +35,25 @@ int main(){
 
 
     auto offset = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 2 OFFSET 1");
-    assert(offset.size() == 1);
+    assert(offset.size() == 2);
     assert(std::abs(offset[0] - prices[1]) < 1e-5);
+    assert(std::abs(offset[1] - prices[2]) < 1e-5);
+
+    auto offset_only = db.query_sql("SELECT price FROM test ORDER BY price DESC OFFSET 2");
+    assert(offset_only.size() == 2);
+    assert(std::abs(offset_only[0] - prices[2]) < 1e-5);
+    assert(std::abs(offset_only[1] - prices[3]) < 1e-5);
+
+    auto offset_then_limit = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 1 OFFSET 2");
+    assert(offset_then_limit.size() == 1);
+    assert(std::abs(offset_then_limit[0] - prices[2]) < 1e-5);
+
+    auto large_limit = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 5 OFFSET 3");
+    assert(large_limit.size() == 1);
+    assert(std::abs(large_limit[0] - prices[3]) < 1e-5);
+
+    auto offset_beyond = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 2 OFFSET 10");
+    assert(offset_beyond.empty());
 
     auto having = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) > 15 ORDER BY quantity ASC");
     assert(having.size() == 3);
