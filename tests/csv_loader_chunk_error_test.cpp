@@ -1,6 +1,7 @@
 #include "csv_loader.hpp"
 #include <cassert>
 #include <sstream>
+#include <vector>
 #include <iostream>
 
 int main() {
@@ -10,18 +11,28 @@ int main() {
         "foo,3.0\n"
         "1e39,4.0\n";
     std::istringstream ss(data);
+    std::string header_line;
+    std::getline(ss, header_line);
+    std::stringstream header_stream(header_line);
+    std::vector<std::string> columns;
+    std::string column_name;
+    while (std::getline(header_stream, column_name, ',')) {
+        columns.push_back(column_name);
+    }
     bool finished = false;
     bool threw = false;
     try {
-        load_csv_chunk(ss, 10, finished);
+        load_csv_chunk(ss, 10, finished, columns);
     } catch (const std::exception &) {
         threw = true;
     }
     assert(threw && "Expected strict parsing to throw");
 
     std::istringstream ss_perm(data);
+    std::getline(ss_perm, header_line);
     finished = false;
-    HostTable table = load_csv_chunk(ss_perm, 10, finished, ParsePolicy::Permissive);
+    HostTable table = load_csv_chunk(ss_perm, 10, finished, columns,
+                                    ParsePolicy::Permissive);
     const auto &price = std::get<std::vector<float>>(table.columns[0].data);
     const auto &quantity = std::get<std::vector<float>>(table.columns[1].data);
     assert(price.size() == 3 && quantity.size() == 3);

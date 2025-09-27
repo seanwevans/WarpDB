@@ -5,6 +5,8 @@
 #include <cctype>
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <vector>
 
 #include <map>
 #include <unordered_map>
@@ -434,12 +436,27 @@ std::vector<float> WarpDB::query_multi_gpu_csv(const std::string &csv_path,
     }
 
     std::string header;
-    std::getline(file, header);
+    if (!std::getline(file, header)) {
+        throw std::runtime_error("Empty CSV file: " + csv_path);
+    }
+
+    std::stringstream header_stream(header);
+    std::vector<std::string> column_names;
+    std::string column_name;
+    while (std::getline(header_stream, column_name, ',')) {
+        column_names.push_back(column_name);
+    }
+    if (column_names.empty()) {
+        throw std::runtime_error("Failed to parse CSV header for: " + csv_path);
+    }
 
     bool finished = false;
     std::vector<float> all_results;
     while (!finished) {
-        HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished);
+        HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished, column_names);
+        if (chunk.num_rows() == 0) {
+            continue;
+        }
         auto part = run_multi_gpu_jit_host(chunk, expr_cuda, condition_cuda);
         all_results.insert(all_results.end(), part.begin(), part.end());
     }

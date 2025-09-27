@@ -296,25 +296,27 @@ Table load_csv_to_gpu(const std::string &filepath) {
 }
 
 HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
+                         const std::vector<std::string> &column_names,
                          ParsePolicy policy) {
-  std::string header;
-  std::streampos pos = stream.tellg();
-  if (!(stream >> header)) {
+  if (column_names.empty())
+    throw std::runtime_error("No column names provided for CSV chunk load");
+
+  if (stream.bad())
+    throw std::runtime_error("CSV stream is in a bad state");
+
+  if (stream.eof()) {
     finished = true;
     return {};
   }
-  stream.seekg(pos);
 
-  std::getline(stream, header);
-  std::stringstream hs(header);
-  std::vector<std::string> names;
-  std::string tmp;
-  while (std::getline(hs, tmp, ',')) names.push_back(tmp);
+  if (stream.fail()) {
+    stream.clear();
+  }
 
   HostTable table;
-  table.columns.resize(names.size());
-  for (size_t i = 0; i < names.size(); ++i) {
-    table.columns[i].name = names[i];
+  table.columns.resize(column_names.size());
+  for (size_t i = 0; i < column_names.size(); ++i) {
+    table.columns[i].name = column_names[i];
     table.columns[i].type = DataType::Float32;
     table.columns[i].data = std::vector<float>();
   }
@@ -325,7 +327,7 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     if (line.empty()) continue;
     std::stringstream ss(line);
     std::string val;
-    for (size_t i = 0; i < names.size(); ++i) {
+    for (size_t i = 0; i < column_names.size(); ++i) {
       if (!std::getline(ss, val, ',')) val.clear();
       val.erase(val.begin(),
                 std::find_if(val.begin(), val.end(),
@@ -358,6 +360,6 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
   if (stream.fail() && !stream.eof()) {
     throw std::runtime_error("Error reading CSV: partial line or I/O error");
   }
-  finished = stream.peek() == EOF;
+  finished = stream.eof();
   return table;
 }
