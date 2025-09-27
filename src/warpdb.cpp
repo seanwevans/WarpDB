@@ -305,13 +305,16 @@ void apply_order_by(const QueryAST &ast, const HostTable &table,
 }
 
 void apply_limit_offset(const QueryAST &ast, std::vector<float> &result) {
-    if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size()) {
-        result.resize(ast.limit->count);
-    }
     if (ast.offset) {
         size_t off = static_cast<size_t>(ast.offset->count);
-        if (off >= result.size()) result.clear();
-        else result.erase(result.begin(), result.begin() + off);
+        if (off >= result.size()) {
+            result.clear();
+            return;
+        }
+        result.erase(result.begin(), result.begin() + off);
+    }
+    if (ast.limit && static_cast<size_t>(ast.limit->count) < result.size()) {
+        result.resize(ast.limit->count);
     }
 }
 
