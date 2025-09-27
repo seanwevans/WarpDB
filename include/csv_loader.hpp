@@ -106,5 +106,6 @@ Table upload_to_gpu(const HostTable &table);
 // Load at most `max_rows` CSV rows from an open input stream. `finished`
 // will be set to true when no more rows are available.
 HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
+                         const std::vector<std::string> &column_names,
                          ParsePolicy policy = ParsePolicy::Strict);
 

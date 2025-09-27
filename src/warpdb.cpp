@@ -5,6 +5,7 @@
 #include <cctype>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 
 #include <map>
 #include <unordered_map>
@@ -384,7 +385,10 @@ std::vector<float> WarpDB::query_multi_gpu(const std::string &expr) {
     auto expr_tokens = tokenize(expr_part);
     expr_ast = parse_expression(expr_tokens);
 
-    std::unordered_set<std::string> cols{"price", "quantity"};
+    std::unordered_set<std::string> cols;
+    for (const auto &c : host_table_.columns) {
+        cols.insert(c.name);
+    }
     validate_ast(expr_ast.get(), cols);
 
     std::string expr_cuda = expr_ast->to_cuda_expr();
@@ -416,7 +420,27 @@ std::vector<float> WarpDB::query_multi_gpu_csv(const std::string &csv_path,
 
     auto expr_tokens = tokenize(expr_part);
     auto expr_ast = parse_expression(expr_tokens);
-    std::unordered_set<std::string> cols{"price", "quantity"};
+    std::ifstream file(csv_path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + csv_path);
+    }
+
+    std::string header;
+    if (!std::getline(file, header)) {
+        throw std::runtime_error("Failed to read CSV header from: " + csv_path);
+    }
+    std::stringstream header_ss(header);
+    std::vector<std::string> column_names;
+    std::string col_name;
+    while (std::getline(header_ss, col_name, ',')) {
+        column_names.push_back(col_name);
+    }
+
+    if (column_names.empty()) {
+        throw std::runtime_error("CSV file has no columns: " + csv_path);
+    }
+
+    std::unordered_set<std::string> cols(column_names.begin(), column_names.end());
     validate_ast(expr_ast.get(), cols);
     std::string expr_cuda = expr_ast->to_cuda_expr();
 
@@ -428,18 +452,13 @@ std::vector<float> WarpDB::query_multi_gpu_csv(const std::string &csv_path,
         condition_cuda = cond_ast->to_cuda_expr();
     }
 
-    std::ifstream file(csv_path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open file: " + csv_path);
-    }
-
-    std::string header;
-    std::getline(file, header);
-
     bool finished = false;
     std::vector<float> all_results;
     while (!finished) {
-        HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished);
+        HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished, column_names);
+        if (chunk.num_rows() == 0 && finished) {
+            break;
+        }
         auto part = run_multi_gpu_jit_host(chunk, expr_cuda, condition_cuda);
         all_results.insert(all_results.end(), part.begin(), part.end());
     }
