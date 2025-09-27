@@ -44,6 +44,19 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
             } else if (host.columns[i].type == DataType::Int32) {
                 auto &vec = std::get<std::vector<int32_t>>(host.columns[i].data);
                 sub.columns[i].data = std::vector<int32_t>(vec.begin()+start, vec.begin()+end);
+            } else if (host.columns[i].type == DataType::Int64) {
+                auto &vec = std::get<std::vector<int64_t>>(host.columns[i].data);
+                sub.columns[i].data =
+                    std::vector<int64_t>(vec.begin() + start, vec.begin() + end);
+            } else if (host.columns[i].type == DataType::Float64) {
+                auto &vec = std::get<std::vector<double>>(host.columns[i].data);
+                sub.columns[i].data =
+                    std::vector<double>(vec.begin() + start, vec.begin() + end);
+            } else if (host.columns[i].type == DataType::String) {
+                const auto &vec =
+                    std::get<std::vector<std::string>>(host.columns[i].data);
+                sub.columns[i].data = std::vector<std::string>(vec.begin() + start,
+                                                               vec.begin() + end);
             }
         }
         CUDA_CHECK(cudaSetDevice(dev));
