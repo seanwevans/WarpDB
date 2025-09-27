@@ -4,6 +4,7 @@
 #include <fstream>
 #include <memory>
 #include <vector>
+#include <sstream>
 
 #include "csv_loader.hpp"
 #include "expression.hpp"
@@ -36,12 +37,27 @@ void run_multi_gpu_jit_large(const std::string &csv_path,
   }
 
   std::string header;
-  std::getline(file, header);
+  if (!std::getline(file, header)) {
+    std::cerr << "Failed to read header from: " << csv_path << "\n";
+    return;
+  }
+  std::stringstream header_ss(header);
+  std::vector<std::string> column_names;
+  std::string col_name;
+  while (std::getline(header_ss, col_name, ',')) {
+    column_names.push_back(col_name);
+  }
+  if (column_names.empty()) {
+    std::cerr << "CSV file has no columns: " << csv_path << "\n";
+    return;
+  }
 
   bool finished = false;
   std::vector<float> all_results;
   while (!finished) {
-    HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished);
+    HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished, column_names);
+    if (chunk.num_rows() == 0 && finished)
+      break;
     auto part = run_multi_gpu_jit_host(chunk, expr_cuda, cond_cuda);
     all_results.insert(all_results.end(), part.begin(), part.end());
   }
