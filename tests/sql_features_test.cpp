@@ -41,5 +41,30 @@ int main(){
     auto having = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) > 15 ORDER BY quantity ASC");
     assert(having.size() == 3);
 
+    auto float_group = db.query_sql(
+        "SELECT SUM(price) FROM test GROUP BY price / 10.0 ORDER BY price / 10.0 ASC");
+    std::map<double, double> float_groups;
+    for (size_t i = 0; i < prices_vec.size(); ++i) {
+        double key = static_cast<double>(prices_vec[i]) / 10.0;
+        float_groups[key] += prices_vec[i];
+    }
+    std::vector<float> expected_float;
+    for (const auto &kv : float_groups) {
+        expected_float.push_back(static_cast<float>(kv.second));
+    }
+
+    assert(float_group.size() == expected_float.size());
+    for (size_t i = 0; i < expected_float.size(); ++i) {
+        assert(std::abs(float_group[i] - expected_float[i]) < 1e-5);
+    }
+
+    auto float_group_desc = db.query_sql(
+        "SELECT SUM(price) FROM test GROUP BY price / 10.0 ORDER BY price / 10.0 DESC");
+    std::vector<float> expected_desc(expected_float.rbegin(), expected_float.rend());
+    assert(float_group_desc.size() == expected_desc.size());
+    for (size_t i = 0; i < expected_desc.size(); ++i) {
+        assert(std::abs(float_group_desc[i] - expected_desc[i]) < 1e-5);
+    }
+
     return 0;
 }

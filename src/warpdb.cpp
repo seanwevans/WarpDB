@@ -243,9 +243,10 @@ std::vector<float> execute_group_by(const QueryAST &ast,
     auto *agg = dynamic_cast<AggregationNode *>(ast.select_list[0].get());
     if (!agg) throw std::runtime_error("Only aggregation queries supported with GROUP BY");
 
-    std::unordered_map<int, AggData> groups;
+    std::unordered_map<double, AggData> groups;
     for (int idx : rows) {
-        int key = static_cast<int>(eval_node(ast.group_by->keys[0].get(), table, idx));
+        double key = static_cast<double>(
+            eval_node(ast.group_by->keys[0].get(), table, idx));
         float val = 1.0f;
         if (agg->agg != AggregationType::Count) {
             val = eval_node(agg->expr.get(), table, idx);
@@ -258,7 +259,7 @@ std::vector<float> execute_group_by(const QueryAST &ast,
         g.max = std::max(g.max, static_cast<double>(val));
     }
 
-    std::vector<std::pair<float,float>> keyed;
+    std::vector<std::pair<double,float>> keyed;
     for (const auto &kv : groups) {
         const AggData &g = kv.second;
         if (!eval_having(ast, g)) continue;
@@ -271,8 +272,7 @@ std::vector<float> execute_group_by(const QueryAST &ast,
         case AggregationType::Min: out = g.min; break;
         case AggregationType::Max: out = g.max; break;
         }
-        float key = static_cast<float>(kv.first);
-        keyed.push_back({key, out});
+        keyed.push_back({kv.first, out});
     }
 
     if (ast.order_by) {
