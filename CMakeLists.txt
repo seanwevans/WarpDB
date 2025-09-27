@@ -115,6 +115,9 @@ add_executable(multi_gpu_sharding_test
 target_link_libraries(multi_gpu_sharding_test PRIVATE warpdb_lib)
 add_test(NAME multi_gpu_sharding_test COMMAND multi_gpu_sharding_test)
 
+target_link_libraries(multi_gpu_arbitrary_columns_test PRIVATE warpdb_lib)
+add_test(NAME multi_gpu_arbitrary_columns_test COMMAND multi_gpu_arbitrary_columns_test)
+
 add_executable(cuda_error_handling_test
     tests/cuda_error_handling_test.cpp)
 target_link_libraries(cuda_error_handling_test PRIVATE warpdb_lib)
