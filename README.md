@@ -209,6 +209,30 @@ CSV file in chunks, enabling processing of datasets larger than a single GPU's
 memory. Results are aggregated back on the host.
 
 
+### Benchmark Visualization
+
+To illustrate the benefit of GPU acceleration WarpDB ships with a helper script
+that benchmarks CPU and GPU execution paths and plots execution time, memory
+throughput, and GPU utilization (with multi-GPU scaling where available).
+
+```bash
+python examples/gpu_cpu_benchmark.py --mode sample
+```
+
+The sample mode uses curated metrics to showcase how JIT-compiled CUDA kernels
+outpace CPU execution even when multiple GPUs are involved. To execute live
+benchmarks on your hardware, install the optional Python bindings and run:
+
+```bash
+python examples/gpu_cpu_benchmark.py --mode live --dataset data/test.csv \
+       --enable-multi-gpu --output-dir visualizations/live
+```
+
+The live mode times Pandas-based CPU evaluation versus WarpDB's GPU kernels,
+computes approximate memory throughput, and generates comparison plots for each
+query in the specified output directory.
+
+
 ## How It Works
 
 1. **CSV Loading**: Input data is loaded from CSV files directly into GPU memory.
