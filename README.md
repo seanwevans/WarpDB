@@ -1,4 +1,5 @@
 # WarpDB
+<img width="256" alt="Magnifying Glass on Orange Gradient" src="https://github.com/user-attachments/assets/abd703f5-17be-4537-b097-35c081e223e5" />
 
 WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage CUDA for high-performance database operations. It uses JIT (Just-In-Time) compilation to dynamically generate CUDA kernels based on user queries, providing fast data processing capabilities for analytical workloads.
 
