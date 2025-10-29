@@ -193,6 +193,16 @@ endif()
 set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver nlohmann_json::nlohmann_json)
 
+if(Arrow_FOUND)
+    target_link_libraries(warpdb_lib PUBLIC ${Arrow_LIBRARIES})
+endif()
+
+if(Arrow_FOUND)
+    add_executable(arrow_loader_smoke_test tests/arrow_loader_smoke_test.cpp)
+    target_link_libraries(arrow_loader_smoke_test PRIVATE warpdb_lib)
+    add_test(NAME arrow_loader_smoke_test COMMAND arrow_loader_smoke_test)
+endif()
+
 
 option(WARPDB_BUILD_PYTHON "Build Python bindings with pybind11" ON)
 
