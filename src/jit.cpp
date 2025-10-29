@@ -126,7 +126,7 @@ void jit_compile_and_launch(const std::string &expr_code,
   std::string body;
   if (!condition_code.empty()) {
     body = "if (" + condition_code + ") {\n    output[idx] = " + expr_code +
-           ";\n}";
+           ";\n} else {\n    output[idx] = 0.0f;\n}";
   } else {
     body = "output[idx] = " + expr_code + ";";
   }
