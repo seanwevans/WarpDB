@@ -30,11 +30,20 @@ struct ConstantNode : public ASTNode {
   std::string value;
   ConstantNode(const std::string &val) : value(val) {}
   std::string to_cuda_expr() const override {
-    if (value.find('.') == std::string::npos) {
-      return value + ".0f"; // if no '.', append '.0f'
-    } else {
-      return value + "f"; // if already decimal, just add 'f'
+    auto has_suffix_f = !value.empty() &&
+                        (value.back() == 'f' || value.back() == 'F');
+    if (value.find('e') != std::string::npos ||
+        value.find('E') != std::string::npos) {
+      if (has_suffix_f)
+        return value;
+      return value + "f"; // scientific notation needs only 'f'
     }
+    if (value.find('.') == std::string::npos) {
+      return value + ".0f"; // pure integers promoted to float literal
+    }
+    if (has_suffix_f)
+      return value;
+    return value + "f"; // decimal literals get a trailing 'f'
   }
   ASTNodeType type() const override { return ASTNodeType::Constant; }
 };
