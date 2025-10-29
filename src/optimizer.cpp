@@ -5,6 +5,9 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <limits>
+#include <algorithm>
+#include <cstdint>
 
 namespace {
 
@@ -12,7 +15,81 @@ float parse_constant(const std::string &val) {
     return std::stof(val);
 }
 
+const ColumnDesc *find_column(const Table &table, const std::string &name) {
+    for (const auto &col : table.columns) {
+        if (col.name == name)
+            return &col;
+    }
+    return nullptr;
+}
+
+template <typename T>
+bool copy_device_column(const ColumnDesc &col, std::vector<T> &out) {
+    if (!col.device_ptr.get() || col.length <= 0)
+        return false;
+    out.resize(col.length);
+    CUDA_CHECK(cudaMemcpy(out.data(), col.device_ptr.get(),
+                          sizeof(T) * col.length,
+                          cudaMemcpyDeviceToHost));
+    return true;
+}
+
 } // namespace
+
+bool compute_table_stats(const Table &table, TableStats &stats) {
+    stats = TableStats{};
+    bool gathered_any = false;
+
+    if (const ColumnDesc *price_col = find_column(table, "price")) {
+        if (price_col->type == DataType::Float32) {
+            std::vector<float> host;
+            if (copy_device_column(*price_col, host) && !host.empty()) {
+                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
+                stats.price.min = *min_it;
+                stats.price.max = *max_it;
+                stats.price.null_count = 0;
+                stats.price_valid = true;
+                gathered_any = true;
+            }
+        } else if (price_col->type == DataType::Float64) {
+            std::vector<double> host;
+            if (copy_device_column(*price_col, host) && !host.empty()) {
+                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
+                stats.price.min = static_cast<float>(*min_it);
+                stats.price.max = static_cast<float>(*max_it);
+                stats.price.null_count = 0;
+                stats.price_valid = true;
+                gathered_any = true;
+            }
+        }
+    }
+
+    if (const ColumnDesc *qty_col = find_column(table, "quantity")) {
+        if (qty_col->type == DataType::Int32) {
+            std::vector<int32_t> host;
+            if (copy_device_column(*qty_col, host) && !host.empty()) {
+                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
+                stats.quantity.min = *min_it;
+                stats.quantity.max = *max_it;
+                stats.quantity.null_count = 0;
+                stats.quantity_valid = true;
+                gathered_any = true;
+            }
+        } else if (qty_col->type == DataType::Int64) {
+            std::vector<int64_t> host;
+            if (copy_device_column(*qty_col, host) && !host.empty()) {
+                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
+                stats.quantity.min = static_cast<int>(*min_it);
+                stats.quantity.max = static_cast<int>(*max_it);
+                stats.quantity.null_count = 0;
+                stats.quantity_valid = true;
+                gathered_any = true;
+            }
+        }
+    }
+
+    return gathered_any;
+}
 
 void analyze_condition(const ASTNode *node, const TableStats &stats,
                        bool &always_true, bool &always_false) {
@@ -64,10 +141,10 @@ void analyze_condition(const ASTNode *node, const TableStats &stats,
             float min = 0.0f, max = 0.0f;
             bool known = true;
 
-            if (var->name == "price") {
+            if (var->name == "price" && stats.price_valid) {
                 min = stats.price.min;
                 max = stats.price.max;
-            } else if (var->name == "quantity") {
+            } else if (var->name == "quantity" && stats.quantity_valid) {
                 min = static_cast<float>(stats.quantity.min);
                 max = static_cast<float>(stats.quantity.max);
             } else {
@@ -136,8 +213,11 @@ void execute_query_optimized(const std::string &expr_part,
 
     bool always_true = false;
     bool always_false = false;
-    if (cond_ast) {
-        analyze_condition(cond_ast.get(), {}, always_true, always_false);
+    TableStats stats;
+    bool have_stats = compute_table_stats(table, stats);
+
+    if (cond_ast && have_stats) {
+        analyze_condition(cond_ast.get(), stats, always_true, always_false);
     }
 
     if (always_false) {
