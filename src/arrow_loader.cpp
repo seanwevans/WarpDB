@@ -84,8 +84,22 @@ Table table_from_arrow(std::shared_ptr<arrow::Table> table) {
 
   Table table;
   table.num_rows = static_cast<int>(N);
-  table.columns.push_back({"price", DataType::Float32, d_price, table.num_rows});
-  table.columns.push_back({"quantity", DataType::Int32, d_quantity, table.num_rows});
+  {
+    ColumnDesc col;
+    col.name = "price";
+    col.type = DataType::Float32;
+    col.device_ptr.reset(d_price);
+    col.length = table.num_rows;
+    table.columns.push_back(std::move(col));
+  }
+  {
+    ColumnDesc col;
+    col.name = "quantity";
+    col.type = DataType::Int32;
+    col.device_ptr.reset(d_quantity);
+    col.length = table.num_rows;
+    table.columns.push_back(std::move(col));
+  }
   return table;
 }
 } // namespace
