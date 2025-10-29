@@ -166,9 +166,15 @@ void jit_compile_and_launch(const std::string &expr_code,
     CUcontext ctx{nullptr};
     CUcontext prev_ctx{nullptr};
     bool retained{false};
+    int prev_runtime_device{-1};
+    bool has_prev_runtime_device{false};
     ~CuPrimaryContextGuard() {
       if (ctx) {
         cuCtxSetCurrent(prev_ctx);
+      }
+      if (has_prev_runtime_device) {
+        // Intentionally ignore the result to avoid throwing from a destructor.
+        cudaSetDevice(prev_runtime_device);
       }
       if (retained) {
         cuDevicePrimaryCtxRelease(device);
@@ -183,6 +189,15 @@ void jit_compile_and_launch(const std::string &expr_code,
   } module;
   CUfunction kernel_func;
   CU_CHECK(cuCtxGetCurrent(&context.prev_ctx));
+  int runtime_device = 0;
+  cudaError_t get_device_result = cudaGetDevice(&runtime_device);
+  if (get_device_result == cudaSuccess) {
+    context.prev_runtime_device = runtime_device;
+    context.has_prev_runtime_device = true;
+  } else if (get_device_result != cudaErrorNoDevice) {
+    throw std::runtime_error("CUDA runtime error: " +
+                             std::string(cudaGetErrorString(get_device_result)));
+  }
   CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
   context.device = cuDevice;
   CU_CHECK(cuDevicePrimaryCtxRetain(&context.ctx, cuDevice));
