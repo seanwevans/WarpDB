@@ -1,6 +1,7 @@
 // src/jit.cpp
 #include "jit.hpp"
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
 #include <nvrtc.h>
@@ -27,6 +28,15 @@
       const char *errStr;                                                      \
       cuGetErrorString(result, &errStr);                                       \
       throw std::runtime_error("CUDA error: " + std::string(errStr));          \
+    }                                                                          \
+  } while (0)
+
+#define CUDA_RUNTIME_CHECK(stmt)                                               \
+  do {                                                                         \
+    cudaError_t result = stmt;                                                 \
+    if (result != cudaSuccess) {                                               \
+      throw std::runtime_error("CUDA runtime error: " +                         \
+                               std::string(cudaGetErrorString(result)));       \
     }                                                                          \
   } while (0)
 
@@ -151,10 +161,18 @@ void jit_compile_and_launch(const std::string &expr_code,
 
   // Load to CUDA
   CUdevice cuDevice = device.device;
-  struct CuContextGuard {
+  struct CuPrimaryContextGuard {
+    CUdevice device{0};
     CUcontext ctx{nullptr};
-    ~CuContextGuard() {
-      if (ctx) cuCtxDestroy(ctx);
+    CUcontext prev_ctx{nullptr};
+    bool retained{false};
+    ~CuPrimaryContextGuard() {
+      if (ctx) {
+        cuCtxSetCurrent(prev_ctx);
+      }
+      if (retained) {
+        cuDevicePrimaryCtxRelease(device);
+      }
     }
   } context;
   struct CuModuleGuard {
@@ -164,7 +182,12 @@ void jit_compile_and_launch(const std::string &expr_code,
     }
   } module;
   CUfunction kernel_func;
-  CU_CHECK(cuCtxCreate(&context.ctx, 0, cuDevice));
+  CU_CHECK(cuCtxGetCurrent(&context.prev_ctx));
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+  context.device = cuDevice;
+  CU_CHECK(cuDevicePrimaryCtxRetain(&context.ctx, cuDevice));
+  context.retained = true;
+  CU_CHECK(cuCtxSetCurrent(context.ctx));
   CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "user_kernel"));
 

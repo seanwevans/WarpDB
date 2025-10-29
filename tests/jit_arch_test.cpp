@@ -10,6 +10,12 @@ int main() {
     float *d_price; cudaMalloc(&d_price, sizeof(float));
     int *d_quantity; cudaMalloc(&d_quantity, sizeof(int));
     float *d_output; cudaMalloc(&d_output, sizeof(float));
+
+    // Simulate runtime usage before invoking the driver-based JIT launch to
+    // ensure the primary context reuse keeps the kernel functional.
+    int *prelaunch_buffer; cudaMalloc(&prelaunch_buffer, sizeof(int));
+    cudaMemset(prelaunch_buffer, 0, sizeof(int));
+    cudaFree(prelaunch_buffer);
     cudaMemcpy(d_price, &h_price, sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_quantity, &h_quantity, sizeof(int), cudaMemcpyHostToDevice);
 
