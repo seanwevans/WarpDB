@@ -44,6 +44,8 @@ struct ColumnStatsInt {
 struct TableStats {
   ColumnStatsFloat price;
   ColumnStatsInt quantity;
+  bool price_valid = false;
+  bool quantity_valid = false;
 };
 
 struct Table {
