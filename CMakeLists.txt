@@ -208,6 +208,9 @@ if(Arrow_FOUND)
     add_executable(arrow_loader_smoke_test tests/arrow_loader_smoke_test.cpp)
     target_link_libraries(arrow_loader_smoke_test PRIVATE warpdb_lib)
     add_test(NAME arrow_loader_smoke_test COMMAND arrow_loader_smoke_test)
+    add_executable(arrow_host_multi_gpu_sql_test tests/arrow_host_multi_gpu_sql_test.cpp)
+    target_link_libraries(arrow_host_multi_gpu_sql_test PRIVATE warpdb_lib)
+    add_test(NAME arrow_host_multi_gpu_sql_test COMMAND arrow_host_multi_gpu_sql_test)
 endif()
 
 

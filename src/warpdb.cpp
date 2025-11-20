@@ -67,10 +67,13 @@ WarpDB::WarpDB(const std::string &filepath, const std::vector<DataType> &schema,
 
     } else if (ext == "parquet") {
         table_ = load_parquet_to_gpu(filepath);
+        host_table_ = load_parquet_to_host(filepath);
     } else if (ext == "arrow" || ext == "feather") {
         table_ = load_arrow_to_gpu(filepath);
+        host_table_ = load_arrow_to_host(filepath);
     } else if (ext == "orc") {
         table_ = load_orc_to_gpu(filepath);
+        host_table_ = load_orc_to_host(filepath);
 #else
     } else if (ext == "parquet" || ext == "arrow" || ext == "feather" ||
                ext == "orc") {

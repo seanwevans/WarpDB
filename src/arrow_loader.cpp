@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 #include <arrow/api.h>
 #include <arrow/io/file.h>
 #include <arrow/ipc/api.h>
@@ -102,6 +103,38 @@ Table table_from_arrow(std::shared_ptr<arrow::Table> table) {
   }
   return table;
 }
+
+HostTable host_table_from_arrow(const std::shared_ptr<arrow::Table> &table) {
+  auto price_array =
+      std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("price")->chunk(0));
+  auto quantity_array =
+      std::static_pointer_cast<arrow::Int32Array>(table->GetColumnByName("quantity")->chunk(0));
+  int64_t N = table->num_rows();
+
+  HostTable host;
+
+  HostColumn price;
+  price.name = "price";
+  price.type = DataType::Float64;
+  std::vector<double> price_vec(static_cast<size_t>(N));
+  for (int64_t i = 0; i < N; ++i) {
+    price_vec[static_cast<size_t>(i)] = price_array->Value(i);
+  }
+  price.data = std::move(price_vec);
+  host.columns.push_back(std::move(price));
+
+  HostColumn quantity;
+  quantity.name = "quantity";
+  quantity.type = DataType::Int32;
+  std::vector<int32_t> qty_vec(static_cast<size_t>(N));
+  for (int64_t i = 0; i < N; ++i) {
+    qty_vec[static_cast<size_t>(i)] = quantity_array->Value(i);
+  }
+  quantity.data = std::move(qty_vec);
+  host.columns.push_back(std::move(quantity));
+
+  return host;
+}
 } // namespace
 
 Table load_parquet_to_gpu(const std::string &filepath) {
@@ -114,6 +147,16 @@ Table load_parquet_to_gpu(const std::string &filepath) {
   return table_from_arrow(table);
 }
 
+HostTable load_parquet_to_host(const std::string &filepath) {
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  PARQUET_ASSIGN_OR_THROW(infile, arrow::io::ReadableFile::Open(filepath));
+  std::unique_ptr<parquet::arrow::FileReader> reader;
+  PARQUET_THROW_NOT_OK(parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader));
+  std::shared_ptr<arrow::Table> table;
+  PARQUET_THROW_NOT_OK(reader->ReadTable(&table));
+  return host_table_from_arrow(table);
+}
+
 Table load_arrow_to_gpu(const std::string &filepath) {
   std::shared_ptr<arrow::io::ReadableFile> infile;
   ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filepath));
@@ -124,12 +167,30 @@ Table load_arrow_to_gpu(const std::string &filepath) {
   return table_from_arrow(table);
 }
 
+HostTable load_arrow_to_host(const std::string &filepath) {
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filepath));
+  std::shared_ptr<arrow::ipc::RecordBatchFileReader> reader;
+  ARROW_ASSIGN_OR_RAISE(reader, arrow::ipc::RecordBatchFileReader::Open(infile));
+  std::shared_ptr<arrow::Table> table;
+  ARROW_ASSIGN_OR_RAISE(table, reader->ReadAll());
+  return host_table_from_arrow(table);
+}
+
 Table load_orc_to_gpu(const std::string &filepath) {
   std::shared_ptr<arrow::io::ReadableFile> infile;
   ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filepath));
   std::shared_ptr<arrow::Table> table;
   ARROW_ASSIGN_OR_RAISE(table, arrow::adapters::orc::ORCFileReader::Read(*infile));
   return table_from_arrow(table);
+}
+
+HostTable load_orc_to_host(const std::string &filepath) {
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filepath));
+  std::shared_ptr<arrow::Table> table;
+  ARROW_ASSIGN_OR_RAISE(table, arrow::adapters::orc::ORCFileReader::Read(*infile));
+  return host_table_from_arrow(table);
 }
 
 #endif // USE_ARROW

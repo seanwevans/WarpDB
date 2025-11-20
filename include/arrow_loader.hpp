@@ -22,6 +22,9 @@ ArrowTable load_csv_arrow(const std::string &filepath);
 Table load_parquet_to_gpu(const std::string &filepath);
 Table load_arrow_to_gpu(const std::string &filepath);
 Table load_orc_to_gpu(const std::string &filepath);
+HostTable load_parquet_to_host(const std::string &filepath);
+HostTable load_arrow_to_host(const std::string &filepath);
+HostTable load_orc_to_host(const std::string &filepath);
 #else
 inline ArrowTable load_csv_arrow(const std::string &) {
     throw std::runtime_error("Arrow support not available");
@@ -33,6 +36,15 @@ inline Table load_arrow_to_gpu(const std::string &) {
     throw std::runtime_error("Arrow support not available");
 }
 inline Table load_orc_to_gpu(const std::string &) {
+    throw std::runtime_error("Arrow support not available");
+}
+inline HostTable load_parquet_to_host(const std::string &) {
+    throw std::runtime_error("Arrow support not available");
+}
+inline HostTable load_arrow_to_host(const std::string &) {
+    throw std::runtime_error("Arrow support not available");
+}
+inline HostTable load_orc_to_host(const std::string &) {
     throw std::runtime_error("Arrow support not available");
 }
 #endif
