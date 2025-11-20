@@ -13,6 +13,11 @@ void jit_compile_and_launch(const std::string &expr_code,
                             float *d_output, int device_id = 0,
                             int block_size = 0);
 
+// Inspect or reset the JIT compilation cache. Primarily used for tests and
+// performance measurements.
+size_t get_jit_compile_count();
+void reset_jit_cache();
+
 // JIT compile a kernel that groups rows by `key_expr_code` and sums
 // `val_expr_code`. The number of unique groups is written to d_count and
 // results are stored in d_out_vals and d_out_keys.

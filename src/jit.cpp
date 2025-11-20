@@ -2,18 +2,26 @@
 #include "jit.hpp"
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <nvrtc.h>
 #include <sstream>
 #include <stdexcept>
-#include <vector>
+#include <thrust/device_ptr.h>
+#include <thrust/reduce.h>
+#include <thrust/sort.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <unordered_map>
+#include <vector>
 #include <mutex>
 #include <algorithm>
 #include <thrust/device_ptr.h>
 #include <thrust/functional.h>
 #include <thrust/sort.h>
+#include <atomic>
+#include <memory>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -87,6 +95,35 @@ const CudaDeviceInfo &initialize_cuda_device(int device_id) {
   return it->second;
 }
 
+struct ContextRef {
+  CUdevice device{0};
+  CUcontext ctx{nullptr};
+
+  explicit ContextRef(CUdevice device_in) : device(device_in) {
+    CU_CHECK(cuDevicePrimaryCtxRetain(&ctx, device));
+  }
+
+  ~ContextRef() { cuDevicePrimaryCtxRelease(device); }
+};
+
+std::shared_ptr<ContextRef> get_primary_context(const CudaDeviceInfo &info,
+                                                int device_id) {
+  static std::mutex ctx_mutex;
+  static std::unordered_map<int, std::weak_ptr<ContextRef>> ctx_cache;
+
+  std::lock_guard<std::mutex> lock(ctx_mutex);
+  auto it = ctx_cache.find(device_id);
+  if (it != ctx_cache.end()) {
+    if (auto existing = it->second.lock()) {
+      return existing;
+    }
+  }
+
+  auto ctx = std::make_shared<ContextRef>(info.device);
+  ctx_cache[device_id] = ctx;
+  return ctx;
+}
+
 std::string compile_cuda_source(const std::string &src,
                                 const std::string &name,
                                 const std::string &arch_flag) {
@@ -117,7 +154,134 @@ std::string compile_cuda_source(const std::string &src,
   return ptx;
 }
 
+struct ContextSetGuard {
+  CUcontext prev_ctx{nullptr};
+  int prev_runtime_device{-1};
+  bool has_prev_runtime_device{false};
+
+  ContextSetGuard(CUcontext target, int device_id) {
+    CU_CHECK(cuCtxGetCurrent(&prev_ctx));
+    int runtime_device = 0;
+    cudaError_t get_device_result = cudaGetDevice(&runtime_device);
+    if (get_device_result == cudaSuccess) {
+      prev_runtime_device = runtime_device;
+      has_prev_runtime_device = true;
+    } else if (get_device_result != cudaErrorNoDevice) {
+      throw std::runtime_error("CUDA runtime error: " +
+                               std::string(cudaGetErrorString(get_device_result)));
+    }
+    CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+    CU_CHECK(cuCtxSetCurrent(target));
+  }
+
+  ~ContextSetGuard() {
+    cuCtxSetCurrent(prev_ctx);
+    if (has_prev_runtime_device) {
+      cudaSetDevice(prev_runtime_device);
+    }
+  }
+};
+
+struct KernelCacheKey {
+  int device_id;
+  std::string code;
+
+  bool operator==(const KernelCacheKey &other) const {
+    return device_id == other.device_id && code == other.code;
+  }
+};
+
+struct KernelCacheKeyHash {
+  size_t operator()(const KernelCacheKey &k) const {
+    size_t h1 = std::hash<int>{}(k.device_id);
+    size_t h2 = std::hash<std::string>{}(k.code);
+    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
+
+struct KernelCacheEntry {
+  std::shared_ptr<ContextRef> context;
+  std::shared_ptr<CUmodule> module_holder;
+  CUfunction function{nullptr};
+};
+
+std::unordered_map<KernelCacheKey, std::shared_ptr<KernelCacheEntry>,
+                   KernelCacheKeyHash> &kernel_cache_instance() {
+  static auto *cache = new std::unordered_map<
+      KernelCacheKey, std::shared_ptr<KernelCacheEntry>, KernelCacheKeyHash>();
+  return *cache;
+}
+
+std::mutex &kernel_cache_mutex() {
+  static auto *m = new std::mutex();
+  return *m;
+}
+
+std::shared_ptr<KernelCacheEntry> load_or_get_cached_kernel(
+    const KernelCacheKey &key, const CudaDeviceInfo &device,
+    const std::string &kernel_src, const char *kernel_name,
+    std::atomic<size_t> &compile_counter) {
+  std::unique_lock<std::mutex> lock(kernel_cache_mutex());
+  auto it = kernel_cache_instance().find(key);
+  if (it != kernel_cache_instance().end()) {
+    return it->second;
+  }
+
+  std::string ptx =
+      compile_cuda_source(kernel_src, std::string(kernel_name) + ".cu",
+                          device.arch_flag);
+  compile_counter.fetch_add(1, std::memory_order_relaxed);
+
+  auto context = get_primary_context(device, key.device_id);
+  ContextSetGuard guard(context->ctx, key.device_id);
+
+  CUmodule raw_module{nullptr};
+  CU_CHECK(cuModuleLoadDataEx(&raw_module, ptx.c_str(), 0, nullptr, nullptr));
+
+  auto module_holder = std::shared_ptr<CUmodule>(
+      new CUmodule(raw_module),
+      [context](CUmodule *mod) {
+        if (!mod)
+          return;
+        CUcontext prev{nullptr};
+        cuCtxGetCurrent(&prev);
+        cuCtxSetCurrent(context->ctx);
+        cuModuleUnload(*mod);
+        cuCtxSetCurrent(prev);
+        delete mod;
+      });
+
+  CUfunction kernel_func{nullptr};
+  CU_CHECK(cuModuleGetFunction(&kernel_func, raw_module, kernel_name));
+
+  auto entry = std::make_shared<KernelCacheEntry>(
+      KernelCacheEntry{context, module_holder, kernel_func});
+
+  auto [insert_it, inserted] = kernel_cache_instance().emplace(key, entry);
+  if (!inserted) {
+    return insert_it->second;
+  }
+  return entry;
+}
+
+std::atomic<size_t> &compile_counter_instance() {
+  static std::atomic<size_t> counter{0};
+  return counter;
+}
+
+void reset_kernel_cache() {
+  std::lock_guard<std::mutex> lock(kernel_cache_mutex());
+  kernel_cache_instance().clear();
+  compile_counter_instance().store(0, std::memory_order_relaxed);
+}
+
 } // namespace
+
+size_t get_jit_compile_count() {
+  return compile_counter_instance().load(std::memory_order_relaxed);
+}
+
+void reset_jit_cache() { reset_kernel_cache(); }
 
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
@@ -157,57 +321,12 @@ void jit_compile_and_launch(const std::string &expr_code,
                      body + "\n    }\n";
 
 
-  // Compile and initialize device
   const auto &device = initialize_cuda_device(device_id);
-  std::string ptx =
-      compile_cuda_source(kernel, "user_kernel.cu", device.arch_flag);
-
-  // Load to CUDA
-  CUdevice cuDevice = device.device;
-  struct CuPrimaryContextGuard {
-    CUdevice device{0};
-    CUcontext ctx{nullptr};
-    CUcontext prev_ctx{nullptr};
-    bool retained{false};
-    int prev_runtime_device{-1};
-    bool has_prev_runtime_device{false};
-    ~CuPrimaryContextGuard() {
-      if (ctx) {
-        cuCtxSetCurrent(prev_ctx);
-      }
-      if (has_prev_runtime_device) {
-        // Intentionally ignore the result to avoid throwing from a destructor.
-        cudaSetDevice(prev_runtime_device);
-      }
-      if (retained) {
-        cuDevicePrimaryCtxRelease(device);
-      }
-    }
-  } context;
-  struct CuModuleGuard {
-    CUmodule mod{nullptr};
-    ~CuModuleGuard() {
-      if (mod) cuModuleUnload(mod);
-    }
-  } module;
-  CUfunction kernel_func;
-  CU_CHECK(cuCtxGetCurrent(&context.prev_ctx));
-  int runtime_device = 0;
-  cudaError_t get_device_result = cudaGetDevice(&runtime_device);
-  if (get_device_result == cudaSuccess) {
-    context.prev_runtime_device = runtime_device;
-    context.has_prev_runtime_device = true;
-  } else if (get_device_result != cudaErrorNoDevice) {
-    throw std::runtime_error("CUDA runtime error: " +
-                             std::string(cudaGetErrorString(get_device_result)));
-  }
-  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
-  context.device = cuDevice;
-  CU_CHECK(cuDevicePrimaryCtxRetain(&context.ctx, cuDevice));
-  context.retained = true;
-  CU_CHECK(cuCtxSetCurrent(context.ctx));
-  CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
-  CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "user_kernel"));
+  KernelCacheKey key{device_id, kernel};
+  auto &counter = compile_counter_instance();
+  auto entry =
+      load_or_get_cached_kernel(key, device, kernel, "user_kernel", counter);
+  ContextSetGuard context_guard(entry->context->ctx, device_id);
 
   // Launch
   std::vector<void *> column_ptrs;
@@ -227,19 +346,17 @@ void jit_compile_and_launch(const std::string &expr_code,
   int minGridSize = 0;
   if (threads <= 0) {
     CU_CHECK(cuOccupancyMaxPotentialBlockSize(&minGridSize, &threads,
-                                              kernel_func, nullptr, 0, 0));
+                                              entry->function, nullptr, 0, 0));
   }
   int blocks = std::max(minGridSize, (N + threads - 1) / threads);
-  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
+  CU_CHECK(cuLaunchKernel(entry->function, blocks, 1, 1, threads, 1, 1, 0, 0,
                           args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
-
-  // Cleanup handled by RAII guards
 }
 
-// Compile and launch a naive GROUP BY SUM kernel. This implementation is not
-// optimised and processes the table using a single CUDA thread but keeps the
-// logic on the GPU for testing purposes.
+// Compile and launch a parallel GROUP BY SUM kernel. Rows are first transformed
+// into key/value pairs using a JIT kernel, then grouped with Thrust
+// sort/reduce-by-key to support thousands of groups efficiently.
 void jit_group_sum(const std::string &val_expr_code,
                    const std::string &key_expr_code, float *d_price,
                    int *d_quantity, float *d_out_vals, int *d_out_keys,
@@ -249,31 +366,23 @@ void jit_group_sum(const std::string &val_expr_code,
   {
     std::ifstream in("custom.cu");
     if (in) {
-      std::stringstream ss; ss << in.rdbuf(); custom_code = ss.str();
+      std::stringstream ss;
+      ss << in.rdbuf();
+      custom_code = ss.str();
     }
   }
 
   std::string kernel = custom_code + R"(
     extern "C" __global__
-    void group_kernel(float* price, int* quantity, float* out_vals, int* out_keys,
-                      int* out_count, int N){
-        if(threadIdx.x==0 && blockIdx.x==0){
-            int count = 0;
-            for(int idx=0; idx<N; ++idx){
-                float val = )" + val_expr_code + R"(;
-                int key = )" + key_expr_code + R"(;
-                int pos=-1;
-                for(int i=0;i<count;i++){
-                    if(out_keys[i]==key){ pos=i; break; }
-                }
-                if(pos==-1){
-                    pos=count++;
-                    out_keys[pos]=key;
-                    out_vals[pos]=0.0f;
-                }
-                out_vals[pos]+=val;
-            }
-            *out_count = count;
+    void group_kernel(float* price, int* quantity, float* tmp_vals, int* tmp_keys,
+                      int N){
+        int tid = blockIdx.x * blockDim.x + threadIdx.x;
+        int stride = blockDim.x * gridDim.x;
+        for(int idx = tid; idx < N; idx += stride){
+            float val = )" + val_expr_code + R"(;
+            int key = )" + key_expr_code + R"(;
+            tmp_keys[idx] = key;
+            tmp_vals[idx] = val;
         }
     }
   )";
@@ -281,14 +390,89 @@ void jit_group_sum(const std::string &val_expr_code,
   const auto &device = initialize_cuda_device(device_id);
   std::string ptx = compile_cuda_source(kernel, "group.cu", device.arch_flag);
 
-  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx); }} context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod); }} module; CUfunction kernel_func;
-  CU_CHECK(cuCtxCreate(&context.ctx, 0, cuDevice));
+  CUdevice cuDevice = device.device;
+  struct CuPrimaryContextGuard {
+    CUdevice device{0};
+    CUcontext ctx{nullptr};
+    CUcontext prev_ctx{nullptr};
+    bool retained{false};
+    int prev_runtime_device{-1};
+    bool has_prev_runtime_device{false};
+    ~CuPrimaryContextGuard() {
+      if (ctx) {
+        cuCtxSetCurrent(prev_ctx);
+      }
+      if (has_prev_runtime_device) {
+        cudaSetDevice(prev_runtime_device);
+      }
+      if (retained) {
+        cuDevicePrimaryCtxRelease(device);
+      }
+    }
+  } context;
+  struct CuModuleGuard {
+    CUmodule mod{nullptr};
+    ~CuModuleGuard() {
+      if (mod)
+        cuModuleUnload(mod);
+    }
+  } module;
+  CUfunction kernel_func;
+
+  CU_CHECK(cuCtxGetCurrent(&context.prev_ctx));
+  int runtime_device = 0;
+  cudaError_t get_device_result = cudaGetDevice(&runtime_device);
+  if (get_device_result == cudaSuccess) {
+    context.prev_runtime_device = runtime_device;
+    context.has_prev_runtime_device = true;
+  } else if (get_device_result != cudaErrorNoDevice) {
+    throw std::runtime_error("CUDA runtime error: " +
+                             std::string(cudaGetErrorString(get_device_result)));
+  }
+
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+  context.device = cuDevice;
+  CU_CHECK(cuDevicePrimaryCtxRetain(&context.ctx, cuDevice));
+  context.retained = true;
+  CU_CHECK(cuCtxSetCurrent(context.ctx));
   CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "group_kernel"));
 
-  std::vector<void*> args{&d_price,&d_quantity,&d_out_vals,&d_out_keys,&d_count,&N};
-  CU_CHECK(cuLaunchKernel(kernel_func, 1,1,1, 1,1,1, 0,0, args.data(), nullptr));
+  CUDA_RUNTIME_CHECK(cudaMemset(d_count, 0, sizeof(int)));
+
+  DeviceBuffer<float> tmp_vals(static_cast<size_t>(N));
+  DeviceBuffer<int> tmp_keys(static_cast<size_t>(N));
+
+  int threads = 0;
+  int minGridSize = 0;
+  CU_CHECK(cuOccupancyMaxPotentialBlockSize(&minGridSize, &threads, kernel_func,
+                                            nullptr, 0, 0));
+  if (threads <= 0)
+    threads = 256;
+  int blocks = std::max(1, std::max(minGridSize, (N + threads - 1) / threads));
+  float *tmp_vals_ptr = tmp_vals.get();
+  int *tmp_keys_ptr = tmp_keys.get();
+  std::vector<void *> args{&d_price, &d_quantity, &tmp_vals_ptr,
+                           &tmp_keys_ptr, &N};
+  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
+                          args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
+
+  auto exec_policy = thrust::cuda::par.on(0);
+  auto tmp_keys_begin = thrust::device_pointer_cast(tmp_keys.get());
+  auto tmp_vals_begin = thrust::device_pointer_cast(tmp_vals.get());
+  thrust::sort_by_key(exec_policy, tmp_keys_begin, tmp_keys_begin + N,
+                      tmp_vals_begin);
+
+  auto out_keys_begin = thrust::device_pointer_cast(d_out_keys);
+  auto out_vals_begin = thrust::device_pointer_cast(d_out_vals);
+  auto reduce_end = thrust::reduce_by_key(exec_policy, tmp_keys_begin,
+                                          tmp_keys_begin + N, tmp_vals_begin,
+                                          out_keys_begin, out_vals_begin);
+
+  int host_count = static_cast<int>(reduce_end.first - out_keys_begin);
+  CUDA_RUNTIME_CHECK(
+      cudaMemcpy(d_count, &host_count, sizeof(int), cudaMemcpyHostToDevice));
 }
 
 void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
