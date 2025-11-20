@@ -117,6 +117,29 @@ DataType infer_column_type(const std::vector<std::string> &values) {
   return DataType::Int32;
 }
 
+DataType widen_type(DataType current, DataType candidate) {
+  if (current == candidate) return current;
+
+  if (current == DataType::String || candidate == DataType::String)
+    return DataType::String;
+
+  const bool current_float =
+      current == DataType::Float32 || current == DataType::Float64;
+  const bool candidate_float =
+      candidate == DataType::Float32 || candidate == DataType::Float64;
+
+  if (current_float || candidate_float) {
+    if (current == DataType::Float64 || candidate == DataType::Float64)
+      return DataType::Float64;
+    return DataType::Float32;
+  }
+
+  if (current == DataType::Int64 || candidate == DataType::Int64)
+    return DataType::Int64;
+
+  return DataType::Int32;
+}
+
 } // namespace
 
 HostTable load_csv_to_host(const std::string &filepath,
@@ -417,13 +440,19 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     return {};
   }
 
+  std::vector<DataType> inferred_types(column_names.size(), DataType::Float32);
+  for (size_t col = 0; col < column_names.size(); ++col) {
+    std::vector<std::string> col_values;
+    col_values.reserve(rows.size());
+    for (const auto &r : rows) col_values.push_back(r[col]);
+    inferred_types[col] = infer_column_type(col_values);
+  }
+
   if (types.empty()) {
-    types.resize(column_names.size(), DataType::Float32);
+    types = inferred_types;
+  } else {
     for (size_t col = 0; col < column_names.size(); ++col) {
-      std::vector<std::string> col_values;
-      col_values.reserve(rows.size());
-      for (const auto &r : rows) col_values.push_back(r[col]);
-      types[col] = infer_column_type(col_values);
+      types[col] = widen_type(types[col], inferred_types[col]);
     }
   }
 
