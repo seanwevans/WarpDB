@@ -15,6 +15,10 @@
 #include <thrust/system/cuda/execution_policy.h>
 #include <unordered_map>
 #include <vector>
+#include <mutex>
+#include <algorithm>
+#include <atomic>
+#include <memory>
 
 #define NVRTC_CHECK(stmt)                                                      \
   do {                                                                         \
@@ -88,6 +92,35 @@ const CudaDeviceInfo &initialize_cuda_device(int device_id) {
   return it->second;
 }
 
+struct ContextRef {
+  CUdevice device{0};
+  CUcontext ctx{nullptr};
+
+  explicit ContextRef(CUdevice device_in) : device(device_in) {
+    CU_CHECK(cuDevicePrimaryCtxRetain(&ctx, device));
+  }
+
+  ~ContextRef() { cuDevicePrimaryCtxRelease(device); }
+};
+
+std::shared_ptr<ContextRef> get_primary_context(const CudaDeviceInfo &info,
+                                                int device_id) {
+  static std::mutex ctx_mutex;
+  static std::unordered_map<int, std::weak_ptr<ContextRef>> ctx_cache;
+
+  std::lock_guard<std::mutex> lock(ctx_mutex);
+  auto it = ctx_cache.find(device_id);
+  if (it != ctx_cache.end()) {
+    if (auto existing = it->second.lock()) {
+      return existing;
+    }
+  }
+
+  auto ctx = std::make_shared<ContextRef>(info.device);
+  ctx_cache[device_id] = ctx;
+  return ctx;
+}
+
 std::string compile_cuda_source(const std::string &src,
                                 const std::string &name,
                                 const std::string &arch_flag) {
@@ -118,7 +151,134 @@ std::string compile_cuda_source(const std::string &src,
   return ptx;
 }
 
+struct ContextSetGuard {
+  CUcontext prev_ctx{nullptr};
+  int prev_runtime_device{-1};
+  bool has_prev_runtime_device{false};
+
+  ContextSetGuard(CUcontext target, int device_id) {
+    CU_CHECK(cuCtxGetCurrent(&prev_ctx));
+    int runtime_device = 0;
+    cudaError_t get_device_result = cudaGetDevice(&runtime_device);
+    if (get_device_result == cudaSuccess) {
+      prev_runtime_device = runtime_device;
+      has_prev_runtime_device = true;
+    } else if (get_device_result != cudaErrorNoDevice) {
+      throw std::runtime_error("CUDA runtime error: " +
+                               std::string(cudaGetErrorString(get_device_result)));
+    }
+    CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+    CU_CHECK(cuCtxSetCurrent(target));
+  }
+
+  ~ContextSetGuard() {
+    cuCtxSetCurrent(prev_ctx);
+    if (has_prev_runtime_device) {
+      cudaSetDevice(prev_runtime_device);
+    }
+  }
+};
+
+struct KernelCacheKey {
+  int device_id;
+  std::string code;
+
+  bool operator==(const KernelCacheKey &other) const {
+    return device_id == other.device_id && code == other.code;
+  }
+};
+
+struct KernelCacheKeyHash {
+  size_t operator()(const KernelCacheKey &k) const {
+    size_t h1 = std::hash<int>{}(k.device_id);
+    size_t h2 = std::hash<std::string>{}(k.code);
+    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+  }
+};
+
+struct KernelCacheEntry {
+  std::shared_ptr<ContextRef> context;
+  std::shared_ptr<CUmodule> module_holder;
+  CUfunction function{nullptr};
+};
+
+std::unordered_map<KernelCacheKey, std::shared_ptr<KernelCacheEntry>,
+                   KernelCacheKeyHash> &kernel_cache_instance() {
+  static auto *cache = new std::unordered_map<
+      KernelCacheKey, std::shared_ptr<KernelCacheEntry>, KernelCacheKeyHash>();
+  return *cache;
+}
+
+std::mutex &kernel_cache_mutex() {
+  static auto *m = new std::mutex();
+  return *m;
+}
+
+std::shared_ptr<KernelCacheEntry> load_or_get_cached_kernel(
+    const KernelCacheKey &key, const CudaDeviceInfo &device,
+    const std::string &kernel_src, const char *kernel_name,
+    std::atomic<size_t> &compile_counter) {
+  std::unique_lock<std::mutex> lock(kernel_cache_mutex());
+  auto it = kernel_cache_instance().find(key);
+  if (it != kernel_cache_instance().end()) {
+    return it->second;
+  }
+
+  std::string ptx =
+      compile_cuda_source(kernel_src, std::string(kernel_name) + ".cu",
+                          device.arch_flag);
+  compile_counter.fetch_add(1, std::memory_order_relaxed);
+
+  auto context = get_primary_context(device, key.device_id);
+  ContextSetGuard guard(context->ctx, key.device_id);
+
+  CUmodule raw_module{nullptr};
+  CU_CHECK(cuModuleLoadDataEx(&raw_module, ptx.c_str(), 0, nullptr, nullptr));
+
+  auto module_holder = std::shared_ptr<CUmodule>(
+      new CUmodule(raw_module),
+      [context](CUmodule *mod) {
+        if (!mod)
+          return;
+        CUcontext prev{nullptr};
+        cuCtxGetCurrent(&prev);
+        cuCtxSetCurrent(context->ctx);
+        cuModuleUnload(*mod);
+        cuCtxSetCurrent(prev);
+        delete mod;
+      });
+
+  CUfunction kernel_func{nullptr};
+  CU_CHECK(cuModuleGetFunction(&kernel_func, raw_module, kernel_name));
+
+  auto entry = std::make_shared<KernelCacheEntry>(
+      KernelCacheEntry{context, module_holder, kernel_func});
+
+  auto [insert_it, inserted] = kernel_cache_instance().emplace(key, entry);
+  if (!inserted) {
+    return insert_it->second;
+  }
+  return entry;
+}
+
+std::atomic<size_t> &compile_counter_instance() {
+  static std::atomic<size_t> counter{0};
+  return counter;
+}
+
+void reset_kernel_cache() {
+  std::lock_guard<std::mutex> lock(kernel_cache_mutex());
+  kernel_cache_instance().clear();
+  compile_counter_instance().store(0, std::memory_order_relaxed);
+}
+
 } // namespace
+
+size_t get_jit_compile_count() {
+  return compile_counter_instance().load(std::memory_order_relaxed);
+}
+
+void reset_jit_cache() { reset_kernel_cache(); }
 
 void jit_compile_and_launch(const std::string &expr_code,
                             const std::string &condition_code,
@@ -158,57 +318,12 @@ void jit_compile_and_launch(const std::string &expr_code,
                      body + "\n    }\n";
 
 
-  // Compile and initialize device
   const auto &device = initialize_cuda_device(device_id);
-  std::string ptx =
-      compile_cuda_source(kernel, "user_kernel.cu", device.arch_flag);
-
-  // Load to CUDA
-  CUdevice cuDevice = device.device;
-  struct CuPrimaryContextGuard {
-    CUdevice device{0};
-    CUcontext ctx{nullptr};
-    CUcontext prev_ctx{nullptr};
-    bool retained{false};
-    int prev_runtime_device{-1};
-    bool has_prev_runtime_device{false};
-    ~CuPrimaryContextGuard() {
-      if (ctx) {
-        cuCtxSetCurrent(prev_ctx);
-      }
-      if (has_prev_runtime_device) {
-        // Intentionally ignore the result to avoid throwing from a destructor.
-        cudaSetDevice(prev_runtime_device);
-      }
-      if (retained) {
-        cuDevicePrimaryCtxRelease(device);
-      }
-    }
-  } context;
-  struct CuModuleGuard {
-    CUmodule mod{nullptr};
-    ~CuModuleGuard() {
-      if (mod) cuModuleUnload(mod);
-    }
-  } module;
-  CUfunction kernel_func;
-  CU_CHECK(cuCtxGetCurrent(&context.prev_ctx));
-  int runtime_device = 0;
-  cudaError_t get_device_result = cudaGetDevice(&runtime_device);
-  if (get_device_result == cudaSuccess) {
-    context.prev_runtime_device = runtime_device;
-    context.has_prev_runtime_device = true;
-  } else if (get_device_result != cudaErrorNoDevice) {
-    throw std::runtime_error("CUDA runtime error: " +
-                             std::string(cudaGetErrorString(get_device_result)));
-  }
-  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
-  context.device = cuDevice;
-  CU_CHECK(cuDevicePrimaryCtxRetain(&context.ctx, cuDevice));
-  context.retained = true;
-  CU_CHECK(cuCtxSetCurrent(context.ctx));
-  CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
-  CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "user_kernel"));
+  KernelCacheKey key{device_id, kernel};
+  auto &counter = compile_counter_instance();
+  auto entry =
+      load_or_get_cached_kernel(key, device, kernel, "user_kernel", counter);
+  ContextSetGuard context_guard(entry->context->ctx, device_id);
 
   // Launch
   std::vector<void *> column_ptrs;
@@ -228,14 +343,12 @@ void jit_compile_and_launch(const std::string &expr_code,
   int minGridSize = 0;
   if (threads <= 0) {
     CU_CHECK(cuOccupancyMaxPotentialBlockSize(&minGridSize, &threads,
-                                              kernel_func, nullptr, 0, 0));
+                                              entry->function, nullptr, 0, 0));
   }
   int blocks = std::max(minGridSize, (N + threads - 1) / threads);
-  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
+  CU_CHECK(cuLaunchKernel(entry->function, blocks, 1, 1, threads, 1, 1, 0, 0,
                           args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
-
-  // Cleanup handled by RAII guards
 }
 
 // Compile and launch a parallel GROUP BY SUM kernel. Rows are first transformed
