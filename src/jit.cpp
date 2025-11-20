@@ -2,13 +2,19 @@
 #include "jit.hpp"
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <nvrtc.h>
 #include <sstream>
 #include <stdexcept>
-#include <vector>
+#include <thrust/device_ptr.h>
+#include <thrust/reduce.h>
+#include <thrust/sort.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <unordered_map>
+#include <vector>
 #include <mutex>
 #include <algorithm>
 #include <atomic>
@@ -345,9 +351,9 @@ void jit_compile_and_launch(const std::string &expr_code,
   CU_CHECK(cuCtxSynchronize());
 }
 
-// Compile and launch a naive GROUP BY SUM kernel. This implementation is not
-// optimised and processes the table using a single CUDA thread but keeps the
-// logic on the GPU for testing purposes.
+// Compile and launch a parallel GROUP BY SUM kernel. Rows are first transformed
+// into key/value pairs using a JIT kernel, then grouped with Thrust
+// sort/reduce-by-key to support thousands of groups efficiently.
 void jit_group_sum(const std::string &val_expr_code,
                    const std::string &key_expr_code, float *d_price,
                    int *d_quantity, float *d_out_vals, int *d_out_keys,
@@ -357,31 +363,23 @@ void jit_group_sum(const std::string &val_expr_code,
   {
     std::ifstream in("custom.cu");
     if (in) {
-      std::stringstream ss; ss << in.rdbuf(); custom_code = ss.str();
+      std::stringstream ss;
+      ss << in.rdbuf();
+      custom_code = ss.str();
     }
   }
 
   std::string kernel = custom_code + R"(
     extern "C" __global__
-    void group_kernel(float* price, int* quantity, float* out_vals, int* out_keys,
-                      int* out_count, int N){
-        if(threadIdx.x==0 && blockIdx.x==0){
-            int count = 0;
-            for(int idx=0; idx<N; ++idx){
-                float val = )" + val_expr_code + R"(;
-                int key = )" + key_expr_code + R"(;
-                int pos=-1;
-                for(int i=0;i<count;i++){
-                    if(out_keys[i]==key){ pos=i; break; }
-                }
-                if(pos==-1){
-                    pos=count++;
-                    out_keys[pos]=key;
-                    out_vals[pos]=0.0f;
-                }
-                out_vals[pos]+=val;
-            }
-            *out_count = count;
+    void group_kernel(float* price, int* quantity, float* tmp_vals, int* tmp_keys,
+                      int N){
+        int tid = blockIdx.x * blockDim.x + threadIdx.x;
+        int stride = blockDim.x * gridDim.x;
+        for(int idx = tid; idx < N; idx += stride){
+            float val = )" + val_expr_code + R"(;
+            int key = )" + key_expr_code + R"(;
+            tmp_keys[idx] = key;
+            tmp_vals[idx] = val;
         }
     }
   )";
@@ -389,14 +387,89 @@ void jit_group_sum(const std::string &val_expr_code,
   const auto &device = initialize_cuda_device(device_id);
   std::string ptx = compile_cuda_source(kernel, "group.cu", device.arch_flag);
 
-  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx); }} context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod); }} module; CUfunction kernel_func;
-  CU_CHECK(cuCtxCreate(&context.ctx, 0, cuDevice));
+  CUdevice cuDevice = device.device;
+  struct CuPrimaryContextGuard {
+    CUdevice device{0};
+    CUcontext ctx{nullptr};
+    CUcontext prev_ctx{nullptr};
+    bool retained{false};
+    int prev_runtime_device{-1};
+    bool has_prev_runtime_device{false};
+    ~CuPrimaryContextGuard() {
+      if (ctx) {
+        cuCtxSetCurrent(prev_ctx);
+      }
+      if (has_prev_runtime_device) {
+        cudaSetDevice(prev_runtime_device);
+      }
+      if (retained) {
+        cuDevicePrimaryCtxRelease(device);
+      }
+    }
+  } context;
+  struct CuModuleGuard {
+    CUmodule mod{nullptr};
+    ~CuModuleGuard() {
+      if (mod)
+        cuModuleUnload(mod);
+    }
+  } module;
+  CUfunction kernel_func;
+
+  CU_CHECK(cuCtxGetCurrent(&context.prev_ctx));
+  int runtime_device = 0;
+  cudaError_t get_device_result = cudaGetDevice(&runtime_device);
+  if (get_device_result == cudaSuccess) {
+    context.prev_runtime_device = runtime_device;
+    context.has_prev_runtime_device = true;
+  } else if (get_device_result != cudaErrorNoDevice) {
+    throw std::runtime_error("CUDA runtime error: " +
+                             std::string(cudaGetErrorString(get_device_result)));
+  }
+
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+  context.device = cuDevice;
+  CU_CHECK(cuDevicePrimaryCtxRetain(&context.ctx, cuDevice));
+  context.retained = true;
+  CU_CHECK(cuCtxSetCurrent(context.ctx));
   CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(), 0, nullptr, nullptr));
   CU_CHECK(cuModuleGetFunction(&kernel_func, module.mod, "group_kernel"));
 
-  std::vector<void*> args{&d_price,&d_quantity,&d_out_vals,&d_out_keys,&d_count,&N};
-  CU_CHECK(cuLaunchKernel(kernel_func, 1,1,1, 1,1,1, 0,0, args.data(), nullptr));
+  CUDA_RUNTIME_CHECK(cudaMemset(d_count, 0, sizeof(int)));
+
+  DeviceBuffer<float> tmp_vals(static_cast<size_t>(N));
+  DeviceBuffer<int> tmp_keys(static_cast<size_t>(N));
+
+  int threads = 0;
+  int minGridSize = 0;
+  CU_CHECK(cuOccupancyMaxPotentialBlockSize(&minGridSize, &threads, kernel_func,
+                                            nullptr, 0, 0));
+  if (threads <= 0)
+    threads = 256;
+  int blocks = std::max(1, std::max(minGridSize, (N + threads - 1) / threads));
+  float *tmp_vals_ptr = tmp_vals.get();
+  int *tmp_keys_ptr = tmp_keys.get();
+  std::vector<void *> args{&d_price, &d_quantity, &tmp_vals_ptr,
+                           &tmp_keys_ptr, &N};
+  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
+                          args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
+
+  auto exec_policy = thrust::cuda::par.on(0);
+  auto tmp_keys_begin = thrust::device_pointer_cast(tmp_keys.get());
+  auto tmp_vals_begin = thrust::device_pointer_cast(tmp_vals.get());
+  thrust::sort_by_key(exec_policy, tmp_keys_begin, tmp_keys_begin + N,
+                      tmp_vals_begin);
+
+  auto out_keys_begin = thrust::device_pointer_cast(d_out_keys);
+  auto out_vals_begin = thrust::device_pointer_cast(d_out_vals);
+  auto reduce_end = thrust::reduce_by_key(exec_policy, tmp_keys_begin,
+                                          tmp_keys_begin + N, tmp_vals_begin,
+                                          out_keys_begin, out_vals_begin);
+
+  int host_count = static_cast<int>(reduce_end.first - out_keys_begin);
+  CUDA_RUNTIME_CHECK(
+      cudaMemcpy(d_count, &host_count, sizeof(int), cudaMemcpyHostToDevice));
 }
 
 void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
