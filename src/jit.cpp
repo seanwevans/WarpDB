@@ -212,12 +212,10 @@ std::shared_ptr<KernelCacheEntry> load_or_get_cached_kernel(
     const KernelCacheKey &key, const CudaDeviceInfo &device,
     const std::string &kernel_src, const char *kernel_name,
     std::atomic<size_t> &compile_counter) {
-  {
-    std::lock_guard<std::mutex> lock(kernel_cache_mutex());
-    auto it = kernel_cache_instance().find(key);
-    if (it != kernel_cache_instance().end()) {
-      return it->second;
-    }
+  std::unique_lock<std::mutex> lock(kernel_cache_mutex());
+  auto it = kernel_cache_instance().find(key);
+  if (it != kernel_cache_instance().end()) {
+    return it->second;
   }
 
   std::string ptx =
@@ -250,10 +248,9 @@ std::shared_ptr<KernelCacheEntry> load_or_get_cached_kernel(
   auto entry = std::make_shared<KernelCacheEntry>(
       KernelCacheEntry{context, module_holder, kernel_func});
 
-  std::lock_guard<std::mutex> lock(kernel_cache_mutex());
-  auto [it, inserted] = kernel_cache_instance().emplace(key, entry);
+  auto [insert_it, inserted] = kernel_cache_instance().emplace(key, entry);
   if (!inserted) {
-    return it->second;
+    return insert_it->second;
   }
   return entry;
 }
