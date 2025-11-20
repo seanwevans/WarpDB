@@ -17,6 +17,9 @@
 #include <vector>
 #include <mutex>
 #include <algorithm>
+#include <thrust/device_ptr.h>
+#include <thrust/functional.h>
+#include <thrust/sort.h>
 #include <atomic>
 #include <memory>
 
@@ -474,51 +477,32 @@ void jit_group_sum(const std::string &val_expr_code,
 
 void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
                     int device_id) {
-  std::string kernel = R"(
-    extern "C" __global__
-    void sort_kernel(int* keys, float* vals, int count, int asc){
-        if(threadIdx.x==0 && blockIdx.x==0){
-            for(int i=0;i<count-1;i++){
-                for(int j=0;j<count-i-1;j++){
-                    bool cond = asc ? keys[j] > keys[j+1] : keys[j] < keys[j+1];
-                    if(cond){
-                        int kt = keys[j]; keys[j]=keys[j+1]; keys[j+1]=kt;
-                        float vt = vals[j]; vals[j]=vals[j+1]; vals[j+1]=vt;
-                    }
-                }
-            }
-        }
-    }
-  )";
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
 
-  const auto &device = initialize_cuda_device(device_id);
-  std::string ptx =
-      compile_cuda_source(kernel, "sort.cu", device.arch_flag);
-  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx);} } context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod);} } module; CUfunction func;
-  CU_CHECK(cuCtxCreate(&context.ctx,0,cuDevice)); CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(),0,nullptr,nullptr)); CU_CHECK(cuModuleGetFunction(&func, module.mod, "sort_kernel"));
-  int asc = ascending ? 1 : 0; std::vector<void*> args{&d_keys,&d_vals,&count,&asc};
-  CU_CHECK(cuLaunchKernel(func,1,1,1,1,1,1,0,0,args.data(),nullptr)); CU_CHECK(cuCtxSynchronize());
+  thrust::device_ptr<int> key_begin(d_keys);
+  thrust::device_ptr<float> val_begin(d_vals);
+
+  if (ascending) {
+    thrust::sort_by_key(key_begin, key_begin + count, val_begin,
+                        thrust::less<int>());
+  } else {
+    thrust::sort_by_key(key_begin, key_begin + count, val_begin,
+                        thrust::greater<int>());
+  }
+
+  CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 }
 
 void jit_sort_float(float *d_vals, int count, bool ascending, int device_id) {
-  std::string kernel = R"(
-    extern "C" __global__
-    void sortf(float* vals, int count, int asc){
-        if(threadIdx.x==0 && blockIdx.x==0){
-            for(int i=0;i<count-1;i++){
-                for(int j=0;j<count-i-1;j++){
-                    bool cond = asc ? vals[j] > vals[j+1] : vals[j] < vals[j+1];
-                    if(cond){ float t=vals[j]; vals[j]=vals[j+1]; vals[j+1]=t; }
-                }
-            }
-        }
-    }
-  )";
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
 
-  const auto &device = initialize_cuda_device(device_id);
-  std::string ptx =
-      compile_cuda_source(kernel, "sortf.cu", device.arch_flag);
-  CUdevice cuDevice = device.device; struct CuContextGuard{ CUcontext ctx{nullptr}; ~CuContextGuard(){ if(ctx) cuCtxDestroy(ctx);} } context; struct CuModuleGuard{ CUmodule mod{nullptr}; ~CuModuleGuard(){ if(mod) cuModuleUnload(mod);} } module; CUfunction func;
-  CU_CHECK(cuCtxCreate(&context.ctx,0,cuDevice)); CU_CHECK(cuModuleLoadDataEx(&module.mod, ptx.c_str(),0,nullptr,nullptr)); CU_CHECK(cuModuleGetFunction(&func, module.mod, "sortf"));
-  int asc=ascending?1:0; std::vector<void*> args{&d_vals,&count,&asc}; CU_CHECK(cuLaunchKernel(func,1,1,1,1,1,1,0,0,args.data(),nullptr)); CU_CHECK(cuCtxSynchronize());
+  thrust::device_ptr<float> begin(d_vals);
+  thrust::device_ptr<float> end = begin + count;
+  if (ascending) {
+    thrust::sort(begin, end, thrust::less<float>());
+  } else {
+    thrust::sort(begin, end, thrust::greater<float>());
+  }
+
+  CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 }

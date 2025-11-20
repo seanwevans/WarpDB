@@ -26,12 +26,13 @@ void jit_group_sum(const std::string &val_expr_code,
                    int *d_quantity, float *d_out_vals, int *d_out_keys,
                    int *d_count, int N, int device_id = 0);
 
-// Sort integer keys and corresponding values in place using a simple GPU
-// kernel. When ascending is false results are sorted in descending order.
+// Sort integer keys and corresponding values in place using a parallel GPU
+// implementation. When ascending is false results are sorted in descending
+// order.
 void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
                     int device_id = 0);
 
-// Sort a single float array in-place.
+// Sort a single float array in-place using a parallel GPU implementation.
 void jit_sort_float(float *d_vals, int count, bool ascending,
                     int device_id = 0);
 

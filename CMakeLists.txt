@@ -41,6 +41,10 @@ set(WARPDB_SRC
     src/optimizer.cpp
 )
 
+# Ensure JIT compilation units are processed by NVCC so Thrust dispatches to the
+# GPU backend instead of falling back to host execution.
+set_source_files_properties(src/jit.cpp PROPERTIES LANGUAGE CUDA)
+
 
 if(Arrow_FOUND)
     list(APPEND WARPDB_SRC src/arrow_loader.cpp)
@@ -176,6 +180,12 @@ add_executable(jit_where_zero_test
 target_link_libraries(jit_where_zero_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_where_zero_test COMMAND jit_where_zero_test)
 
+add_executable(jit_sort_parallel_test
+    tests/jit_sort_parallel_test.cpp
+    src/jit.cpp
+)
+target_link_libraries(jit_sort_parallel_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
+add_test(NAME jit_sort_parallel_test COMMAND jit_sort_parallel_test)
 add_executable(jit_group_sum_test
     tests/jit_group_sum_test.cpp
     src/jit.cpp
