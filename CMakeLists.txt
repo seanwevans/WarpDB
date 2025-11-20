@@ -171,6 +171,13 @@ add_executable(jit_where_zero_test
 target_link_libraries(jit_where_zero_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_where_zero_test COMMAND jit_where_zero_test)
 
+add_executable(jit_sort_parallel_test
+    tests/jit_sort_parallel_test.cpp
+    src/jit.cpp
+)
+target_link_libraries(jit_sort_parallel_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
+add_test(NAME jit_sort_parallel_test COMMAND jit_sort_parallel_test)
+
 add_executable(optimizer_test
     tests/optimizer_test.cpp
     src/expression.cpp
