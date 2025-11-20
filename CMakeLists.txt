@@ -41,6 +41,10 @@ set(WARPDB_SRC
     src/optimizer.cpp
 )
 
+# Ensure JIT compilation units are processed by NVCC so Thrust dispatches to the
+# GPU backend instead of falling back to host execution.
+set_source_files_properties(src/jit.cpp PROPERTIES LANGUAGE CUDA)
+
 
 if(Arrow_FOUND)
     list(APPEND WARPDB_SRC src/arrow_loader.cpp)
