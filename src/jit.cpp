@@ -260,13 +260,13 @@ void jit_group_sum(const std::string &val_expr_code,
     extern "C" __global__
     void group_kernel(float* price, int* quantity, float* tmp_vals, int* tmp_keys,
                       int N){
-        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        int tid = blockIdx.x * blockDim.x + threadIdx.x;
         int stride = blockDim.x * gridDim.x;
-        for(int i = idx; i < N; i += stride){
+        for(int idx = tid; idx < N; idx += stride){
             float val = )" + val_expr_code + R"(;
             int key = )" + key_expr_code + R"(;
-            tmp_keys[i] = key;
-            tmp_vals[i] = val;
+            tmp_keys[idx] = key;
+            tmp_vals[idx] = val;
         }
     }
   )";
