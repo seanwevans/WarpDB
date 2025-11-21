@@ -132,6 +132,11 @@ add_executable(csv_loader_error_test
 target_link_libraries(csv_loader_error_test PRIVATE warpdb_lib)
 add_test(NAME csv_loader_error_test COMMAND csv_loader_error_test)
 
+add_executable(csv_loader_row_length_test
+    tests/csv_loader_row_length_test.cpp)
+target_link_libraries(csv_loader_row_length_test PRIVATE warpdb_lib)
+add_test(NAME csv_loader_row_length_test COMMAND csv_loader_row_length_test)
+
 add_executable(csv_loader_chunk_error_test
     tests/csv_loader_chunk_error_test.cpp)
 target_link_libraries(csv_loader_chunk_error_test PRIVATE warpdb_lib)
