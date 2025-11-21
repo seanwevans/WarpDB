@@ -162,7 +162,32 @@ HostTable load_csv_to_host(const std::string &filepath,
   std::vector<DataType> types = schema;
   if (!types.empty() && types.size() != names.size())
     throw std::runtime_error("Schema size does not match column count");
-  if (types.empty()) types.assign(names.size(), DataType::Float32);
+
+  bool inferred_schema = types.empty();
+  std::vector<std::vector<std::string>> buffered_rows;
+  if (inferred_schema) {
+    std::string line;
+    while (std::getline(file, line)) {
+      if (line.empty()) continue;
+      std::stringstream ss(line);
+      std::string value;
+      std::vector<std::string> parsed(names.size());
+      for (size_t i = 0; i < names.size(); ++i) {
+        if (!std::getline(ss, value, ',')) value.clear();
+        parsed[i] = trim(value);
+      }
+      buffered_rows.push_back(std::move(parsed));
+    }
+
+    std::vector<DataType> inferred_types(names.size(), DataType::Float32);
+    for (size_t i = 0; i < names.size(); ++i) {
+      std::vector<std::string> col_values;
+      col_values.reserve(buffered_rows.size());
+      for (const auto &row : buffered_rows) col_values.push_back(row[i]);
+      inferred_types[i] = infer_column_type(col_values);
+    }
+    types = inferred_types;
+  }
 
   HostTable host;
   host.columns.resize(names.size());
@@ -188,6 +213,7 @@ HostTable load_csv_to_host(const std::string &filepath,
     }
   }
 
+  auto append_row = [&](const std::vector<std::string> &values, int row) {
   std::string line;
   int row = 0;
   while (std::getline(file, line)) {
@@ -209,14 +235,7 @@ HostTable load_csv_to_host(const std::string &filepath,
     std::stringstream ss(line);
     std::string value;
     for (size_t i = 0; i < names.size(); ++i) {
-      if (!std::getline(ss, value, ',')) value.clear();
-      value.erase(value.begin(),
-                  std::find_if(value.begin(), value.end(),
-                               [](unsigned char ch) { return !std::isspace(ch); }));
-      value.erase(std::find_if(value.rbegin(), value.rend(),
-                               [](unsigned char ch) { return !std::isspace(ch); })
-                      .base(),
-                  value.end());
+      const std::string &value = values[i];
       HostColumn &col = host.columns[i];
       switch (col.type) {
       case DataType::Int32: {
@@ -299,6 +318,29 @@ HostTable load_csv_to_host(const std::string &filepath,
         std::get<std::vector<std::string>>(col.data).push_back(value);
         break;
       }
+    }
+  };
+
+  int row = 0;
+  if (inferred_schema) {
+    for (const auto &values : buffered_rows) {
+      ++row;
+      append_row(values, row);
+    }
+  } else {
+    std::string line;
+    while (std::getline(file, line)) {
+      if (line.empty())
+        continue;
+      ++row;
+      std::stringstream ss(line);
+      std::string value;
+      std::vector<std::string> parsed(names.size());
+      for (size_t i = 0; i < names.size(); ++i) {
+        if (!std::getline(ss, value, ',')) value.clear();
+        parsed[i] = trim(value);
+      }
+      append_row(parsed, row);
     }
   }
 
