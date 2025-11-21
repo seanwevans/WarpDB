@@ -32,6 +32,18 @@ int main() {
     std::string code5 = ast5->to_cuda_expr();
     assert(code5 == "((price[idx] > 10.0f) || (quantity[idx] < 5.0f))");
 
-    std::cout << "All parser tests passed\n";
-    return 0;
+    // unary minus on literal
+    auto tokens6 = tokenize("-5");
+    auto ast6 = parse_expression(tokens6);
+    std::string code6 = ast6->to_cuda_expr();
+    assert(code6 == "((-1.0f) * 5.0f)");
+
+    // unary minus on parenthesized expression
+    auto tokens7 = tokenize("-(3 + 4)");
+    auto ast7 = parse_expression(tokens7);
+    std::string code7 = ast7->to_cuda_expr();
+    assert(code7 == "((-1.0f) * (3.0f + 4.0f))");
+
+    std::cout << "All parser tests passed\n"; 
+    return 0; 
 }
