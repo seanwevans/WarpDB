@@ -8,6 +8,13 @@
 std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
                                           const std::string &expr_cuda,
                                           const std::string &cond_cuda) {
+    int original_device = 0;
+    CUDA_CHECK(cudaGetDevice(&original_device));
+    struct DeviceReset {
+        int device;
+        ~DeviceReset() { cudaSetDevice(device); }
+    } device_reset{original_device};
+
     int device_count = 0;
     CUDA_CHECK(cudaGetDeviceCount(&device_count));
     if (device_count < 2) {
