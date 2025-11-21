@@ -7,8 +7,8 @@
 void execute_query_optimized(const std::string &expr_part,
                              const std::string &where_part, Table &table);
 
-// Populate table statistics by copying the required columns from device to
-// host memory. Returns true when statistics for the supported columns were
+// Populate table statistics by copying numeric columns from device to host
+// memory. Returns true when statistics for at least one numeric column were
 // gathered, or false if they are unavailable (e.g. missing columns).
 bool compute_table_stats(const Table &table, TableStats &stats);
 

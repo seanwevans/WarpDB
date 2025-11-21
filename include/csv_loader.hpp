@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
+#include <unordered_map>
 #include <vector>
+#include <optional>
 #ifdef USE_ARROW
 #include <memory>
 #include <arrow/api.h>
@@ -42,10 +44,17 @@ struct ColumnStatsInt {
 };
 
 struct TableStats {
-  ColumnStatsFloat price;
-  ColumnStatsInt quantity;
-  bool price_valid = false;
-  bool quantity_valid = false;
+  struct NumericColumnStats {
+    double min = 0.0;
+    double max = 0.0;
+    std::optional<int64_t> min_int = std::nullopt;
+    std::optional<int64_t> max_int = std::nullopt;
+    int null_count = 0;
+    bool valid = false;
+    DataType type = DataType::Float32;
+  };
+
+  std::unordered_map<std::string, NumericColumnStats> numeric_columns;
 };
 
 struct Table {

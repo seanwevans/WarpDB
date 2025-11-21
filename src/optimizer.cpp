@@ -8,11 +8,12 @@
 #include <limits>
 #include <algorithm>
 #include <cstdint>
+#include <exception>
 
 namespace {
 
-float parse_constant(const std::string &val) {
-    return std::stof(val);
+double parse_constant(const std::string &val) {
+    return std::stod(val);
 }
 
 const ColumnDesc *find_column(const Table &table, const std::string &name) {
@@ -40,51 +41,69 @@ bool compute_table_stats(const Table &table, TableStats &stats) {
     stats = TableStats{};
     bool gathered_any = false;
 
-    if (const ColumnDesc *price_col = find_column(table, "price")) {
-        if (price_col->type == DataType::Float32) {
-            std::vector<float> host;
-            if (copy_device_column(*price_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.price.min = *min_it;
-                stats.price.max = *max_it;
-                stats.price.null_count = 0;
-                stats.price_valid = true;
-                gathered_any = true;
-            }
-        } else if (price_col->type == DataType::Float64) {
-            std::vector<double> host;
-            if (copy_device_column(*price_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.price.min = static_cast<float>(*min_it);
-                stats.price.max = static_cast<float>(*max_it);
-                stats.price.null_count = 0;
-                stats.price_valid = true;
-                gathered_any = true;
-            }
-        }
-    }
+    for (const auto &col : table.columns) {
+        TableStats::NumericColumnStats col_stats;
+        bool found_stats = false;
 
-    if (const ColumnDesc *qty_col = find_column(table, "quantity")) {
-        if (qty_col->type == DataType::Int32) {
+        switch (col.type) {
+        case DataType::Float32: {
+            std::vector<float> host;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = *min_it;
+                col_stats.max = *max_it;
+                found_stats = true;
+            }
+            break;
+        }
+        case DataType::Float64: {
+            std::vector<double> host;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = *min_it;
+                col_stats.max = *max_it;
+                found_stats = true;
+            }
+            break;
+        }
+        case DataType::Int32: {
             std::vector<int32_t> host;
-            if (copy_device_column(*qty_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.quantity.min = *min_it;
-                stats.quantity.max = *max_it;
-                stats.quantity.null_count = 0;
-                stats.quantity_valid = true;
-                gathered_any = true;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = *min_it;
+                col_stats.max = *max_it;
+                col_stats.min_int = static_cast<int64_t>(*min_it);
+                col_stats.max_int = static_cast<int64_t>(*max_it);
+                found_stats = true;
             }
-        } else if (qty_col->type == DataType::Int64) {
+            break;
+        }
+        case DataType::Int64: {
             std::vector<int64_t> host;
-            if (copy_device_column(*qty_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.quantity.min = static_cast<int>(*min_it);
-                stats.quantity.max = static_cast<int>(*max_it);
-                stats.quantity.null_count = 0;
-                stats.quantity_valid = true;
-                gathered_any = true;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min_int = *min_it;
+                col_stats.max_int = *max_it;
+                col_stats.min = static_cast<double>(*min_it);
+                col_stats.max = static_cast<double>(*max_it);
+                found_stats = true;
             }
+            break;
+        }
+        default:
+            break;
+        }
+
+        if (found_stats) {
+            col_stats.null_count = 0;
+            col_stats.valid = true;
+            col_stats.type = col.type;
+            stats.numeric_columns[col.name] = col_stats;
+            gathered_any = true;
         }
     }
 
@@ -137,21 +156,9 @@ void analyze_condition(const ASTNode *node, const TableStats &stats,
         }
 
         if (var && cnst) {
-            float c = parse_constant(cnst->value);
-            float min = 0.0f, max = 0.0f;
-            bool known = true;
-
-            if (var->name == "price" && stats.price_valid) {
-                min = stats.price.min;
-                max = stats.price.max;
-            } else if (var->name == "quantity" && stats.quantity_valid) {
-                min = static_cast<float>(stats.quantity.min);
-                max = static_cast<float>(stats.quantity.max);
-            } else {
-                known = false;
-            }
-
-            if (known) {
+            const auto it = stats.numeric_columns.find(var->name);
+            if (it != stats.numeric_columns.end() && it->second.valid) {
+                const auto &col_stats = it->second;
                 std::string op = bin->op;
                 if (!var_left) {
                     if (op == ">")
@@ -164,36 +171,94 @@ void analyze_condition(const ASTNode *node, const TableStats &stats,
                         op = ">=";
                 }
 
-                if (op == ">") {
-                    if (min > c)
-                        always_true = true;
-                    else if (max <= c)
-                        always_false = true;
-                } else if (op == ">=") {
-                    if (min >= c)
-                        always_true = true;
-                    else if (max < c)
-                        always_false = true;
-                } else if (op == "<") {
-                    if (max < c)
-                        always_true = true;
-                    else if (min >= c)
-                        always_false = true;
-                } else if (op == "<=") {
-                    if (max <= c)
-                        always_true = true;
-                    else if (min > c)
-                        always_false = true;
-                } else if (op == "==" || op == "=") {
-                    if (min == max && min == c)
-                        always_true = true;
-                    else if (c < min || c > max)
-                        always_false = true;
-                } else if (op == "!=") {
-                    if (min == max && min == c)
-                        always_false = true;
-                    else if (c < min || c > max)
-                        always_true = true;
+                bool known = true;
+
+                if ((col_stats.type == DataType::Int32 ||
+                     col_stats.type == DataType::Int64) &&
+                    col_stats.min_int.has_value() &&
+                    col_stats.max_int.has_value()) {
+                    int64_t c_int = 0;
+                    try {
+                        std::size_t parsed = 0;
+                        c_int = std::stoll(cnst->value, &parsed, 10);
+                        if (parsed != cnst->value.size())
+                            known = false;
+                    } catch (const std::exception &) {
+                        known = false;
+                    }
+
+                    if (known) {
+                        const auto min = *col_stats.min_int;
+                        const auto max = *col_stats.max_int;
+
+                        if (op == ">") {
+                            if (min > c_int)
+                                always_true = true;
+                            else if (max <= c_int)
+                                always_false = true;
+                        } else if (op == ">=") {
+                            if (min >= c_int)
+                                always_true = true;
+                            else if (max < c_int)
+                                always_false = true;
+                        } else if (op == "<") {
+                            if (max < c_int)
+                                always_true = true;
+                            else if (min >= c_int)
+                                always_false = true;
+                        } else if (op == "<=") {
+                            if (max <= c_int)
+                                always_true = true;
+                            else if (min > c_int)
+                                always_false = true;
+                        } else if (op == "==" || op == "=") {
+                            if (min == max && min == c_int)
+                                always_true = true;
+                            else if (c_int < min || c_int > max)
+                                always_false = true;
+                        } else if (op == "!=") {
+                            if (min == max && min == c_int)
+                                always_false = true;
+                            else if (c_int < min || c_int > max)
+                                always_true = true;
+                        }
+                    }
+                } else {
+                    double c = parse_constant(cnst->value);
+                    double min = col_stats.min;
+                    double max = col_stats.max;
+
+                    if (op == ">") {
+                        if (min > c)
+                            always_true = true;
+                        else if (max <= c)
+                            always_false = true;
+                    } else if (op == ">=") {
+                        if (min >= c)
+                            always_true = true;
+                        else if (max < c)
+                            always_false = true;
+                    } else if (op == "<") {
+                        if (max < c)
+                            always_true = true;
+                        else if (min >= c)
+                            always_false = true;
+                    } else if (op == "<=") {
+                        if (max <= c)
+                            always_true = true;
+                        else if (min > c)
+                            always_false = true;
+                    } else if (op == "==" || op == "=") {
+                        if (min == max && min == c)
+                            always_true = true;
+                        else if (c < min || c > max)
+                            always_false = true;
+                    } else if (op == "!=") {
+                        if (min == max && min == c)
+                            always_false = true;
+                        else if (c < min || c > max)
+                            always_true = true;
+                    }
                 }
             }
         }
