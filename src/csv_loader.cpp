@@ -214,6 +214,26 @@ HostTable load_csv_to_host(const std::string &filepath,
   }
 
   auto append_row = [&](const std::vector<std::string> &values, int row) {
+  std::string line;
+  int row = 0;
+  while (std::getline(file, line)) {
+    if (line.empty())
+      continue;
+    ++row;
+    const size_t delimiter_count =
+        static_cast<size_t>(std::count(line.begin(), line.end(), ','));
+    const size_t field_count = delimiter_count + 1;
+    if (field_count != names.size()) {
+      std::cerr << "Row " << row << " has " << field_count
+                << " fields but " << names.size() << " were expected"
+                << std::endl;
+      if (policy == ParsePolicy::Strict) {
+        throw std::runtime_error("Incorrect number of fields in row");
+      }
+      continue;
+    }
+    std::stringstream ss(line);
+    std::string value;
     for (size_t i = 0; i < names.size(); ++i) {
       const std::string &value = values[i];
       HostColumn &col = host.columns[i];
