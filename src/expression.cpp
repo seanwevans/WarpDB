@@ -210,6 +210,16 @@ ASTNodePtr Parser::parse_term() {
 }
 
 ASTNodePtr Parser::parse_factor() {
+  if (match("+")) {
+    return parse_factor();
+  }
+  if (match("-")) {
+    auto operand = parse_factor();
+    auto minus_one = std::make_unique<ConstantNode>("-1");
+    return std::make_unique<BinaryOpNode>("*", std::move(minus_one),
+                                          std::move(operand));
+  }
+
   const Token &tok = peek();
   if (tok.type == TokenType::Number) {
     advance();
