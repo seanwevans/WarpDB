@@ -34,17 +34,14 @@ static void test_missing_stats_skip_elimination() {
     TableStats stats;
     bool has_stats = compute_table_stats(table, stats);
     assert(!has_stats);
-    assert(!stats.price_valid);
-    assert(!stats.quantity_valid);
+    assert(stats.numeric_columns.empty());
 }
 
 static void test_analyze_condition_always_false() {
     auto tokens = tokenize("price > 100");
     auto ast = parse_expression(tokens);
     TableStats stats;
-    stats.price.min = 10.0f;
-    stats.price.max = 50.0f;
-    stats.price_valid = true;
+    stats.numeric_columns["price"] = {10.0, 50.0, 0, true};
     bool always_true = false;
     bool always_false = false;
     analyze_condition(ast.get(), stats, always_true, always_false);
@@ -60,7 +57,7 @@ static void test_real_stats_prevent_elimination() {
     TableStats stats;
     bool has_stats = compute_table_stats(table, stats);
     assert(has_stats);
-    assert(stats.price_valid);
+    assert(stats.numeric_columns.count("price") == 1);
 
     bool always_true = false;
     bool always_false = false;

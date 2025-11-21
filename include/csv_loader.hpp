@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <unordered_map>
 #include <vector>
 #ifdef USE_ARROW
 #include <memory>
@@ -42,10 +43,14 @@ struct ColumnStatsInt {
 };
 
 struct TableStats {
-  ColumnStatsFloat price;
-  ColumnStatsInt quantity;
-  bool price_valid = false;
-  bool quantity_valid = false;
+  struct NumericColumnStats {
+    double min = 0.0;
+    double max = 0.0;
+    int null_count = 0;
+    bool valid = false;
+  };
+
+  std::unordered_map<std::string, NumericColumnStats> numeric_columns;
 };
 
 struct Table {

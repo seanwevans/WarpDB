@@ -40,51 +40,64 @@ bool compute_table_stats(const Table &table, TableStats &stats) {
     stats = TableStats{};
     bool gathered_any = false;
 
-    if (const ColumnDesc *price_col = find_column(table, "price")) {
-        if (price_col->type == DataType::Float32) {
-            std::vector<float> host;
-            if (copy_device_column(*price_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.price.min = *min_it;
-                stats.price.max = *max_it;
-                stats.price.null_count = 0;
-                stats.price_valid = true;
-                gathered_any = true;
-            }
-        } else if (price_col->type == DataType::Float64) {
-            std::vector<double> host;
-            if (copy_device_column(*price_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.price.min = static_cast<float>(*min_it);
-                stats.price.max = static_cast<float>(*max_it);
-                stats.price.null_count = 0;
-                stats.price_valid = true;
-                gathered_any = true;
-            }
-        }
-    }
+    for (const auto &col : table.columns) {
+        TableStats::NumericColumnStats col_stats;
+        bool found_stats = false;
 
-    if (const ColumnDesc *qty_col = find_column(table, "quantity")) {
-        if (qty_col->type == DataType::Int32) {
+        switch (col.type) {
+        case DataType::Float32: {
+            std::vector<float> host;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = *min_it;
+                col_stats.max = *max_it;
+                found_stats = true;
+            }
+            break;
+        }
+        case DataType::Float64: {
+            std::vector<double> host;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = *min_it;
+                col_stats.max = *max_it;
+                found_stats = true;
+            }
+            break;
+        }
+        case DataType::Int32: {
             std::vector<int32_t> host;
-            if (copy_device_column(*qty_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.quantity.min = *min_it;
-                stats.quantity.max = *max_it;
-                stats.quantity.null_count = 0;
-                stats.quantity_valid = true;
-                gathered_any = true;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = *min_it;
+                col_stats.max = *max_it;
+                found_stats = true;
             }
-        } else if (qty_col->type == DataType::Int64) {
+            break;
+        }
+        case DataType::Int64: {
             std::vector<int64_t> host;
-            if (copy_device_column(*qty_col, host) && !host.empty()) {
-                auto [min_it, max_it] = std::minmax_element(host.begin(), host.end());
-                stats.quantity.min = static_cast<int>(*min_it);
-                stats.quantity.max = static_cast<int>(*max_it);
-                stats.quantity.null_count = 0;
-                stats.quantity_valid = true;
-                gathered_any = true;
+            if (copy_device_column(col, host) && !host.empty()) {
+                auto [min_it, max_it] =
+                    std::minmax_element(host.begin(), host.end());
+                col_stats.min = static_cast<double>(*min_it);
+                col_stats.max = static_cast<double>(*max_it);
+                found_stats = true;
             }
+            break;
+        }
+        default:
+            break;
+        }
+
+        if (found_stats) {
+            col_stats.null_count = 0;
+            col_stats.valid = true;
+            stats.numeric_columns[col.name] = col_stats;
+            gathered_any = true;
         }
     }
 
@@ -137,16 +150,14 @@ void analyze_condition(const ASTNode *node, const TableStats &stats,
         }
 
         if (var && cnst) {
-            float c = parse_constant(cnst->value);
-            float min = 0.0f, max = 0.0f;
+            double c = static_cast<double>(parse_constant(cnst->value));
+            double min = 0.0f, max = 0.0f;
             bool known = true;
 
-            if (var->name == "price" && stats.price_valid) {
-                min = stats.price.min;
-                max = stats.price.max;
-            } else if (var->name == "quantity" && stats.quantity_valid) {
-                min = static_cast<float>(stats.quantity.min);
-                max = static_cast<float>(stats.quantity.max);
+            auto it = stats.numeric_columns.find(var->name);
+            if (it != stats.numeric_columns.end() && it->second.valid) {
+                min = it->second.min;
+                max = it->second.max;
             } else {
                 known = false;
             }
