@@ -142,6 +142,12 @@ You can also install the module directly from the source tree:
 pip install .
 ```
 
+During Python builds, `setup.py` automatically downloads the pinned
+`nlohmann/json` header (`v3.2.0`, matching the CMake `FetchContent` pin) into a
+local build dependency directory and adds that include path before compiling the
+`Pybind11Extension`. Python-only builders do not need to pre-install
+`nlohmann/json`.
+
 Or build a wheel for redistribution:
 
 ```bash
