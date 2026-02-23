@@ -15,6 +15,7 @@ ext_modules = [
             'src/json_loader.cpp',
             'src/expression.cpp',
             'src/jit.cpp',
+            'src/multi_gpu_utils.cpp',
             'src/optimizer.cpp',
             'src/arrow_utils.cpp',
         ],
