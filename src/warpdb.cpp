@@ -337,6 +337,12 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     for (const auto &c : table_.columns) cols.insert(c.name);
     validate_query_ast(ast, cols);
 
+    if (!ast.joins.empty()) {
+        throw std::runtime_error(
+            "JOIN is parsed but not executed yet. SQL execution currently "
+            "supports single-table queries only.");
+    }
+
     std::vector<int> rows = filter_rows(ast, host_table_);
 
     std::vector<float> result;
