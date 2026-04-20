@@ -97,21 +97,12 @@ QueryResult WarpDB::query(const std::string &expr) {
         throw std::runtime_error("Empty query expression");
     }
 
-    std::string upper = expr;
-    for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-
-    std::string expr_part = expr;
-    std::string where_part;
-    auto where_pos = upper.find("WHERE");
-    if (where_pos != std::string::npos) {
-        expr_part = expr.substr(0, where_pos);
-        where_part = expr.substr(where_pos + 5);
-    }
+    auto tokens = tokenize(expr);
+    auto split = split_where_clause_tokens(tokens);
 
     std::unique_ptr<ASTNode> expr_ast;
     try {
-        auto expr_tokens = tokenize(expr_part);
-        expr_ast = parse_expression(expr_tokens);
+        expr_ast = parse_expression(split.expression_tokens);
     } catch (const std::exception &e) {
         throw std::runtime_error(std::string("Failed to parse expression: ") + e.what());
     }
@@ -125,10 +116,9 @@ QueryResult WarpDB::query(const std::string &expr) {
     std::string expr_cuda = expr_ast->to_cuda_expr();
 
     std::string condition_cuda;
-    if (!where_part.empty()) {
+    if (split.has_where) {
         try {
-            auto cond_tokens = tokenize(where_part);
-            auto cond_ast = parse_expression(cond_tokens);
+            auto cond_ast = parse_expression(split.where_tokens);
             validate_ast(cond_ast.get(), cols);
             condition_cuda = cond_ast->to_cuda_expr();
         } catch (const std::exception &e) {
@@ -564,20 +554,11 @@ QueryResult WarpDB::query_multi_gpu(const std::string &expr) {
         throw std::runtime_error("Host table not available for multi-GPU query");
     }
 
-    std::string upper = expr;
-    for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-
-    std::string expr_part = expr;
-    std::string where_part;
-    auto where_pos = upper.find("WHERE");
-    if (where_pos != std::string::npos) {
-        expr_part = expr.substr(0, where_pos);
-        where_part = expr.substr(where_pos + 5);
-    }
+    auto tokens = tokenize(expr);
+    auto split = split_where_clause_tokens(tokens);
 
     std::unique_ptr<ASTNode> expr_ast;
-    auto expr_tokens = tokenize(expr_part);
-    expr_ast = parse_expression(expr_tokens);
+    expr_ast = parse_expression(split.expression_tokens);
 
     std::unordered_set<std::string> cols;
     for (const auto &c : host_table_.columns) {
@@ -588,9 +569,8 @@ QueryResult WarpDB::query_multi_gpu(const std::string &expr) {
     std::string expr_cuda = expr_ast->to_cuda_expr();
 
     std::string condition_cuda;
-    if (!where_part.empty()) {
-        auto cond_tokens = tokenize(where_part);
-        auto cond_ast = parse_expression(cond_tokens);
+    if (split.has_where) {
+        auto cond_ast = parse_expression(split.where_tokens);
         validate_ast(cond_ast.get(), cols);
         condition_cuda = cond_ast->to_cuda_expr();
     }
@@ -601,19 +581,9 @@ QueryResult WarpDB::query_multi_gpu(const std::string &expr) {
 QueryResult WarpDB::query_multi_gpu_csv(const std::string &csv_path,
                                         const std::string &expr,
                                         int rows_per_chunk) {
-    std::string upper = expr;
-    for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-
-    std::string expr_part = expr;
-    std::string where_part;
-    auto where_pos = upper.find("WHERE");
-    if (where_pos != std::string::npos) {
-        expr_part = expr.substr(0, where_pos);
-        where_part = expr.substr(where_pos + 5);
-    }
-
-    auto expr_tokens = tokenize(expr_part);
-    auto expr_ast = parse_expression(expr_tokens);
+    auto tokens = tokenize(expr);
+    auto split = split_where_clause_tokens(tokens);
+    auto expr_ast = parse_expression(split.expression_tokens);
     std::ifstream file(csv_path);
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open file: " + csv_path);
@@ -639,9 +609,8 @@ QueryResult WarpDB::query_multi_gpu_csv(const std::string &csv_path,
     std::string expr_cuda = expr_ast->to_cuda_expr();
 
     std::string condition_cuda;
-    if (!where_part.empty()) {
-        auto cond_tokens = tokenize(where_part);
-        auto cond_ast = parse_expression(cond_tokens);
+    if (split.has_where) {
+        auto cond_ast = parse_expression(split.where_tokens);
         validate_ast(cond_ast.get(), cols);
         condition_cuda = cond_ast->to_cuda_expr();
     }
