@@ -8,6 +8,20 @@
 
 int main(){
     WarpDB db("data/test.csv");
+    auto single_expr = db.query_sql("SELECT price FROM test");
+    assert(single_expr.size() == 4);
+
+    bool multiple_expr_threw = false;
+    try {
+        (void)db.query_sql("SELECT price, quantity FROM test");
+    } catch (const std::runtime_error &e) {
+        multiple_expr_threw =
+            std::string(e.what()).find(
+                "Multiple SELECT expressions are not yet supported in query_sql") !=
+            std::string::npos;
+    }
+    assert(multiple_expr_threw);
+
     auto res = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity ORDER BY quantity ASC");
 
     HostTable h = load_csv_to_host("data/test.csv");
