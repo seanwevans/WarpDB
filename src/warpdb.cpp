@@ -241,6 +241,100 @@ bool eval_having(const QueryAST &ast, const AggData &gd) {
     return eval_having_node(ast.having.value().get(), gd) != 0.0f;
 }
 
+void collect_variable_names(const ASTNode *node,
+                            std::unordered_set<std::string> &names) {
+    if (!node) return;
+    if (auto var = dynamic_cast<const VariableNode *>(node)) {
+        names.insert(var->name);
+        return;
+    }
+    if (auto bin = dynamic_cast<const BinaryOpNode *>(node)) {
+        collect_variable_names(bin->left.get(), names);
+        collect_variable_names(bin->right.get(), names);
+        return;
+    }
+    if (auto fn = dynamic_cast<const FunctionCallNode *>(node)) {
+        for (const auto &arg : fn->args) {
+            collect_variable_names(arg.get(), names);
+        }
+        return;
+    }
+    if (auto agg = dynamic_cast<const AggregationNode *>(node)) {
+        collect_variable_names(agg->expr.get(), names);
+    }
+}
+
+bool can_use_gpu_group_sum_fast_path(const QueryAST &ast) {
+    if (!ast.group_by || ast.group_by->keys.size() != 1) return false;
+    if (ast.select_list.size() != 1) return false;
+    if (ast.where || ast.having || !ast.joins.empty()) return false;
+
+    auto *agg = dynamic_cast<const AggregationNode *>(ast.select_list[0].get());
+    if (!agg || agg->agg != AggregationType::Sum) return false;
+
+    auto *key_var = dynamic_cast<const VariableNode *>(ast.group_by->keys[0].get());
+    if (!key_var || key_var->name != "quantity") return false;
+
+    std::unordered_set<std::string> vars;
+    collect_variable_names(agg->expr.get(), vars);
+    for (const auto &name : vars) {
+        if (name != "price" && name != "quantity") {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<float> execute_group_by_gpu_sum(const QueryAST &ast, const Table &table) {
+    const int N = table.num_rows;
+    float *d_price = table.get_column_ptr<float>("price");
+    int *d_quantity = table.get_column_ptr<int>("quantity");
+    if (!d_price || !d_quantity) {
+        throw std::runtime_error(
+            "GPU GROUP BY SUM fast path requires float 'price' and int 'quantity' columns");
+    }
+
+    DeviceBuffer<float> d_out_vals(static_cast<size_t>(N));
+    DeviceBuffer<int> d_out_keys(static_cast<size_t>(N));
+    DeviceBuffer<int> d_count(1);
+
+    const auto *agg = dynamic_cast<const AggregationNode *>(ast.select_list[0].get());
+    jit_group_sum(agg->expr->to_cuda_expr(), ast.group_by->keys[0]->to_cuda_expr(),
+                  d_price, d_quantity, d_out_vals.get(), d_out_keys.get(),
+                  d_count.get(), N);
+
+    int host_count = 0;
+    CUDA_CHECK(cudaMemcpy(&host_count, d_count.get(), sizeof(int),
+                          cudaMemcpyDeviceToHost));
+    if (host_count <= 0) return {};
+
+    std::vector<int> keys(static_cast<size_t>(host_count));
+    std::vector<float> vals(static_cast<size_t>(host_count));
+    CUDA_CHECK(cudaMemcpy(keys.data(), d_out_keys.get(),
+                          sizeof(int) * static_cast<size_t>(host_count),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(vals.data(), d_out_vals.get(),
+                          sizeof(float) * static_cast<size_t>(host_count),
+                          cudaMemcpyDeviceToHost));
+
+    std::vector<std::pair<int, float>> keyed;
+    keyed.reserve(static_cast<size_t>(host_count));
+    for (int i = 0; i < host_count; ++i) {
+        keyed.push_back({keys[static_cast<size_t>(i)], vals[static_cast<size_t>(i)]});
+    }
+
+    if (ast.order_by && !ast.order_by->ascending) {
+        std::reverse(keyed.begin(), keyed.end());
+    }
+
+    std::vector<float> result;
+    result.reserve(keyed.size());
+    for (const auto &kv : keyed) {
+        result.push_back(kv.second);
+    }
+    return result;
+}
+
 std::vector<float> execute_group_by(const QueryAST &ast,
                                     const HostTable &table,
                                     const std::vector<int> &rows) {
@@ -347,7 +441,11 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
 
     std::vector<float> result;
     if (ast.group_by) {
-        result = execute_group_by(ast, host_table_, rows);
+        if (can_use_gpu_group_sum_fast_path(ast)) {
+            result = execute_group_by_gpu_sum(ast, table_);
+        } else {
+            result = execute_group_by(ast, host_table_, rows);
+        }
     } else {
         for (int idx : rows) {
             result.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
