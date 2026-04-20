@@ -44,6 +44,30 @@ int main() {
     std::string code7 = ast7->to_cuda_expr();
     assert(code7 == "(-1.0f * (3.0f + 4.0f))");
 
+    // split WHERE on keyword token only
+    auto tokens8 = tokenize("price * 2 WHERE quantity >= 2");
+    auto split8 = split_where_clause_tokens(tokens8);
+    assert(split8.has_where);
+    auto expr8 = parse_expression(split8.expression_tokens);
+    auto where8 = parse_expression(split8.where_tokens);
+    assert(expr8->to_cuda_expr() == "(price[idx] * 2.0f)");
+    assert(where8->to_cuda_expr() == "(quantity[idx] >= 2.0f)");
+
+    // identifiers containing "where" must not split the clause
+    auto tokens9 = tokenize("somewhere_value + 1");
+    auto split9 = split_where_clause_tokens(tokens9);
+    assert(!split9.has_where);
+    assert(split9.where_tokens.empty());
+    auto expr9 = parse_expression(split9.expression_tokens);
+    assert(expr9->to_cuda_expr() == "(somewhere_value[idx] + 1.0f)");
+
+    auto tokens10 = tokenize("anyWHERE_metric + 3");
+    auto split10 = split_where_clause_tokens(tokens10);
+    assert(!split10.has_where);
+    assert(split10.where_tokens.empty());
+    auto expr10 = parse_expression(split10.expression_tokens);
+    assert(expr10->to_cuda_expr() == "(anyWHERE_metric[idx] + 3.0f)");
+
     std::cout << "All parser tests passed\n"; 
     return 0; 
 }

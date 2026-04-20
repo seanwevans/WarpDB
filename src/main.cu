@@ -105,21 +105,15 @@ int main(int argc, char **argv) {
     std::string csv_path = "data/test.csv";
     if (argc >= 3)
       csv_path = argv[2];
-    std::string upper_query = user_query;
-    for (auto &c : upper_query)
-      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  auto tokens = tokenize(user_query);
+  auto split = split_where_clause_tokens(tokens);
 
-  std::string expr_part = user_query;
-  std::string where_part;
-  auto where_pos = upper_query.find("WHERE");
-  if (where_pos != std::string::npos) {
-    expr_part = user_query.substr(0, where_pos);
-    where_part = user_query.substr(where_pos + 5); // skip "WHERE"
+  auto expr_ast_preview = parse_expression(split.expression_tokens);
+  std::cout << "Expr (CUDA): " << expr_ast_preview->to_cuda_expr() << "\n";
+  if (split.has_where) {
+    auto where_ast_preview = parse_expression(split.where_tokens);
+    std::cout << "Where (CUDA): " << where_ast_preview->to_cuda_expr() << "\n";
   }
-
-  std::cout << "Expr: " << expr_part << "\n";
-  if (!where_part.empty())
-    std::cout << "Where: " << where_part << "\n";
 
   Table table = load_csv_to_gpu(csv_path);
   std::cout << "Loaded " << table.num_rows << " rows.\n";
@@ -185,17 +179,15 @@ int main(int argc, char **argv) {
   }
 
   std::cout << "\n[ Optimizer Demo ]\n";
-  execute_query_optimized(expr_part, where_part, table);
+  execute_query_optimized(split.expression_tokens, split.where_tokens, table);
 
 
   std::string condition_cuda;
-  if (!where_part.empty()) {
-    auto cond_tokens = tokenize(where_part);
-    auto cond_ast = parse_expression(cond_tokens);
+  if (split.has_where) {
+    auto cond_ast = parse_expression(split.where_tokens);
     condition_cuda = cond_ast->to_cuda_expr();
   }
 
-  auto tokens = tokenize(user_query);
   std::cout << "\nTokenized Expression:\n";
   for (auto &tok : tokens) {
     std::cout << "  ["
@@ -207,7 +199,7 @@ int main(int argc, char **argv) {
   }
 
   // parse
-  auto ast = parse_expression(tokens);
+  auto ast = parse_expression(split.expression_tokens);
   std::cout << "\nParsed Expression (CUDA):\n";
 
   std::string expr_cuda = ast->to_cuda_expr();

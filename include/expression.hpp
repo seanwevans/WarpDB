@@ -15,6 +15,14 @@ struct Token {
 
 std::vector<Token> tokenize(const std::string &input);
 
+struct WhereClauseSplit {
+  std::vector<Token> expression_tokens;
+  std::vector<Token> where_tokens;
+  bool has_where = false;
+};
+
+WhereClauseSplit split_where_clause_tokens(const std::vector<Token> &tokens);
+
 enum class ASTNodeType { Constant, Variable, BinaryOp, FunctionCall, Aggregation };
 
 

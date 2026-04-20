@@ -119,6 +119,45 @@ std::vector<Token> tokenize(const std::string &input) {
   return tokens;
 }
 
+WhereClauseSplit split_where_clause_tokens(const std::vector<Token> &tokens) {
+  WhereClauseSplit split;
+  size_t end_idx = tokens.size();
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    if (tokens[i].type == TokenType::End) {
+      end_idx = i;
+      break;
+    }
+  }
+
+  size_t where_idx = end_idx;
+  for (size_t i = 0; i < end_idx; ++i) {
+    if (tokens[i].type == TokenType::Keyword && tokens[i].value == "WHERE") {
+      where_idx = i;
+      split.has_where = true;
+      break;
+    }
+  }
+
+  split.expression_tokens.insert(split.expression_tokens.end(), tokens.begin(),
+                                 tokens.begin() + where_idx);
+  if (split.has_where) {
+    split.where_tokens.insert(split.where_tokens.end(), tokens.begin() + where_idx + 1,
+                              tokens.begin() + end_idx);
+  }
+
+  Token end_token{TokenType::End, "", 1, 1};
+  if (end_idx < tokens.size()) {
+    end_token = tokens[end_idx];
+  }
+
+  split.expression_tokens.push_back(end_token);
+  if (split.has_where) {
+    split.where_tokens.push_back(end_token);
+  }
+
+  return split;
+}
+
 namespace {
 
 class Parser {

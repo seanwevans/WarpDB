@@ -7,8 +7,8 @@
 #include "csv_loader.hpp"
 #include "expression.hpp"
 
-void execute_query_optimized(const std::string &expr_part,
-                             const std::string &where_part, Table &table);
+void execute_query_optimized(const std::vector<Token> &expr_tokens,
+                             const std::vector<Token> &where_tokens, Table &table);
 
 // Populate table statistics by copying numeric columns from device to host
 // memory. Returns true when statistics for at least one numeric column were

@@ -290,15 +290,13 @@ void analyze_condition(const ASTNode *node, const TableStats &stats,
     }
 }
 
-void execute_query_optimized(const std::string &expr_part,
-                             const std::string &where_part, Table &table) {
-    auto expr_tokens = tokenize(expr_part);
+void execute_query_optimized(const std::vector<Token> &expr_tokens,
+                             const std::vector<Token> &where_tokens, Table &table) {
     auto expr_ast = parse_expression(expr_tokens);
 
     std::unique_ptr<ASTNode> cond_ast;
-    if (!where_part.empty()) {
-        auto cond_tokens = tokenize(where_part);
-        cond_ast = parse_expression(cond_tokens);
+    if (!where_tokens.empty()) {
+        cond_ast = parse_expression(where_tokens);
     }
 
     bool always_true = false;
