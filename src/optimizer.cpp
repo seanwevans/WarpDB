@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
+#include <unordered_set>
 
 namespace {
 
@@ -33,6 +34,30 @@ bool copy_device_column(const ColumnDesc &col, std::vector<T> &out) {
                           sizeof(T) * col.length,
                           cudaMemcpyDeviceToHost));
     return true;
+}
+
+} // namespace
+
+namespace {
+
+struct QualifiedColumn {
+    std::string relation;
+    std::string column;
+};
+
+std::optional<QualifiedColumn> parse_qualified_column(const ASTNode *node) {
+    auto *var = dynamic_cast<const VariableNode *>(node);
+    if (!var) {
+        return std::nullopt;
+    }
+
+    const std::string &name = var->name;
+    const auto dot = name.find('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= name.size()) {
+        return std::nullopt;
+    }
+
+    return QualifiedColumn{name.substr(0, dot), name.substr(dot + 1)};
 }
 
 } // namespace
@@ -309,4 +334,166 @@ void execute_query_optimized(const std::string &expr_part,
         std::cout << "Result[" << i << "] = " << h_out[i] << "\n";
     }
 
+}
+
+std::vector<JoinPredicate> extract_equi_join_predicates(const QueryAST &ast) {
+    std::vector<JoinPredicate> predicates;
+    predicates.reserve(ast.joins.size());
+
+    for (const auto &join : ast.joins) {
+        auto *cmp = dynamic_cast<const BinaryOpNode *>(join.condition.get());
+        if (!cmp || (cmp->op != "=" && cmp->op != "==")) {
+            continue;
+        }
+
+        auto left = parse_qualified_column(cmp->left.get());
+        auto right = parse_qualified_column(cmp->right.get());
+        if (!left || !right || left->relation == right->relation) {
+            continue;
+        }
+
+        predicates.push_back(
+            JoinPredicate{left->relation, left->column,
+                          right->relation, right->column});
+    }
+
+    return predicates;
+}
+
+double estimate_equi_join_rows(double left_rows, double right_rows,
+                               double left_distinct, double right_distinct) {
+    const double safe_left = std::max(left_rows, 1.0);
+    const double safe_right = std::max(right_rows, 1.0);
+    const double safe_left_ndv = std::max(left_distinct, 1.0);
+    const double safe_right_ndv = std::max(right_distinct, 1.0);
+    const double denom = std::max(safe_left_ndv, safe_right_ndv);
+    return std::max(1.0, (safe_left * safe_right) / denom);
+}
+
+JoinPlan build_greedy_join_plan(
+    const QueryAST &ast,
+    const std::unordered_map<std::string, RelationStats> &stats_by_relation) {
+    JoinPlan plan;
+
+    std::unordered_set<std::string> relations;
+    if (!ast.from_table.empty()) {
+        relations.insert(ast.from_table);
+    }
+    for (const auto &join : ast.joins) {
+        relations.insert(join.table);
+    }
+    if (relations.empty()) {
+        return plan;
+    }
+
+    auto predicates = extract_equi_join_predicates(ast);
+
+    auto relation_rows = [&](const std::string &relation) {
+        const auto it = stats_by_relation.find(relation);
+        if (it == stats_by_relation.end()) {
+            return 1.0;
+        }
+        return std::max(it->second.row_count, 1.0);
+    };
+
+    auto column_ndv = [&](const std::string &relation,
+                          const std::string &column) {
+        const auto rel_it = stats_by_relation.find(relation);
+        if (rel_it == stats_by_relation.end()) {
+            return relation_rows(relation);
+        }
+        const auto ndv_it = rel_it->second.distinct_counts.find(column);
+        if (ndv_it == rel_it->second.distinct_counts.end()) {
+            return relation_rows(relation);
+        }
+        return std::max(ndv_it->second, 1.0);
+    };
+
+    std::unordered_set<std::string> joined;
+    double current_rows = 0.0;
+
+    auto seed_it = std::min_element(
+        relations.begin(), relations.end(),
+        [&](const std::string &a, const std::string &b) {
+            return relation_rows(a) < relation_rows(b);
+        });
+
+    const std::string seed = *seed_it;
+    joined.insert(seed);
+    current_rows = relation_rows(seed);
+    plan.steps.push_back(JoinPlanStep{seed, current_rows, std::nullopt});
+
+    while (joined.size() < relations.size()) {
+        double best_rows = std::numeric_limits<double>::max();
+        std::string best_relation;
+        std::optional<JoinPredicate> best_predicate;
+
+        for (const auto &candidate : relations) {
+            if (joined.count(candidate)) {
+                continue;
+            }
+
+            double candidate_rows = relation_rows(candidate);
+            bool connected = false;
+            std::optional<JoinPredicate> candidate_predicate;
+
+            for (const auto &pred : predicates) {
+                const bool left_is_candidate = pred.left_relation == candidate;
+                const bool right_is_candidate = pred.right_relation == candidate;
+
+                if (!left_is_candidate && !right_is_candidate) {
+                    continue;
+                }
+
+                const std::string other = left_is_candidate
+                                              ? pred.right_relation
+                                              : pred.left_relation;
+                if (!joined.count(other)) {
+                    continue;
+                }
+
+                connected = true;
+                const double candidate_ndv = left_is_candidate
+                                                 ? column_ndv(candidate,
+                                                              pred.left_column)
+                                                 : column_ndv(candidate,
+                                                              pred.right_column);
+                const double other_ndv = left_is_candidate
+                                             ? column_ndv(other,
+                                                          pred.right_column)
+                                             : column_ndv(other,
+                                                          pred.left_column);
+                const double est_rows = estimate_equi_join_rows(
+                    current_rows, relation_rows(candidate), other_ndv,
+                    candidate_ndv);
+                if (est_rows < candidate_rows) {
+                    candidate_rows = est_rows;
+                    candidate_predicate = pred;
+                }
+            }
+
+            if (!connected) {
+                candidate_rows = current_rows * relation_rows(candidate);
+                candidate_predicate = std::nullopt;
+            }
+
+            if (candidate_rows < best_rows) {
+                best_rows = candidate_rows;
+                best_relation = candidate;
+                best_predicate = candidate_predicate;
+            }
+        }
+
+        if (best_relation.empty()) {
+            break;
+        }
+
+        joined.insert(best_relation);
+        current_rows = std::max(best_rows, 1.0);
+        plan.steps.push_back(
+            JoinPlanStep{best_relation, current_rows, best_predicate});
+        plan.estimated_total_cost += current_rows;
+    }
+
+    return plan;
 }
