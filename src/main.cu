@@ -219,16 +219,6 @@ int main(int argc, char **argv) {
                                        table.num_rows, threshold);
   CUDA_CHECK(cudaGetLastError());
 
-  print_first_few<<<1, 4>>>(d_price, d_quantity, table.num_rows);
-  CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  filter_price_gt<<<blocks, threads>>>(d_price, d_quantity,
-                                       d_price_filtered.get(),
-                                       d_quantity_filtered.get(), d_count.get(),
-                                       table.num_rows, threshold);
-  CUDA_CHECK(cudaGetLastError());
-
   CUDA_CHECK(cudaDeviceSynchronize());
 
   CUDA_CHECK(cudaMemcpy(&h_count, d_count.get(), sizeof(int),
