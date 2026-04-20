@@ -92,7 +92,7 @@ WarpDB::~WarpDB() {
     }
 }
 
-std::vector<float> WarpDB::query(const std::string &expr) {
+QueryResult WarpDB::query(const std::string &expr) {
     if (expr.empty()) {
         throw std::runtime_error("Empty query expression");
     }
@@ -147,7 +147,7 @@ std::vector<float> WarpDB::query(const std::string &expr) {
     CUDA_CHECK(cudaMemcpy(result.data(), d_output.get(),
                          sizeof(float) * table_.num_rows,
                          cudaMemcpyDeviceToHost));
-    return result;
+    return QueryResult(std::move(result));
 }
 
 
@@ -241,6 +241,100 @@ bool eval_having(const QueryAST &ast, const AggData &gd) {
     return eval_having_node(ast.having.value().get(), gd) != 0.0f;
 }
 
+void collect_variable_names(const ASTNode *node,
+                            std::unordered_set<std::string> &names) {
+    if (!node) return;
+    if (auto var = dynamic_cast<const VariableNode *>(node)) {
+        names.insert(var->name);
+        return;
+    }
+    if (auto bin = dynamic_cast<const BinaryOpNode *>(node)) {
+        collect_variable_names(bin->left.get(), names);
+        collect_variable_names(bin->right.get(), names);
+        return;
+    }
+    if (auto fn = dynamic_cast<const FunctionCallNode *>(node)) {
+        for (const auto &arg : fn->args) {
+            collect_variable_names(arg.get(), names);
+        }
+        return;
+    }
+    if (auto agg = dynamic_cast<const AggregationNode *>(node)) {
+        collect_variable_names(agg->expr.get(), names);
+    }
+}
+
+bool can_use_gpu_group_sum_fast_path(const QueryAST &ast) {
+    if (!ast.group_by || ast.group_by->keys.size() != 1) return false;
+    if (ast.select_list.size() != 1) return false;
+    if (ast.where || ast.having || !ast.joins.empty()) return false;
+
+    auto *agg = dynamic_cast<const AggregationNode *>(ast.select_list[0].get());
+    if (!agg || agg->agg != AggregationType::Sum) return false;
+
+    auto *key_var = dynamic_cast<const VariableNode *>(ast.group_by->keys[0].get());
+    if (!key_var || key_var->name != "quantity") return false;
+
+    std::unordered_set<std::string> vars;
+    collect_variable_names(agg->expr.get(), vars);
+    for (const auto &name : vars) {
+        if (name != "price" && name != "quantity") {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<float> execute_group_by_gpu_sum(const QueryAST &ast, const Table &table) {
+    const int N = table.num_rows;
+    float *d_price = table.get_column_ptr<float>("price");
+    int *d_quantity = table.get_column_ptr<int>("quantity");
+    if (!d_price || !d_quantity) {
+        throw std::runtime_error(
+            "GPU GROUP BY SUM fast path requires float 'price' and int 'quantity' columns");
+    }
+
+    DeviceBuffer<float> d_out_vals(static_cast<size_t>(N));
+    DeviceBuffer<int> d_out_keys(static_cast<size_t>(N));
+    DeviceBuffer<int> d_count(1);
+
+    const auto *agg = dynamic_cast<const AggregationNode *>(ast.select_list[0].get());
+    jit_group_sum(agg->expr->to_cuda_expr(), ast.group_by->keys[0]->to_cuda_expr(),
+                  d_price, d_quantity, d_out_vals.get(), d_out_keys.get(),
+                  d_count.get(), N);
+
+    int host_count = 0;
+    CUDA_CHECK(cudaMemcpy(&host_count, d_count.get(), sizeof(int),
+                          cudaMemcpyDeviceToHost));
+    if (host_count <= 0) return {};
+
+    std::vector<int> keys(static_cast<size_t>(host_count));
+    std::vector<float> vals(static_cast<size_t>(host_count));
+    CUDA_CHECK(cudaMemcpy(keys.data(), d_out_keys.get(),
+                          sizeof(int) * static_cast<size_t>(host_count),
+                          cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(vals.data(), d_out_vals.get(),
+                          sizeof(float) * static_cast<size_t>(host_count),
+                          cudaMemcpyDeviceToHost));
+
+    std::vector<std::pair<int, float>> keyed;
+    keyed.reserve(static_cast<size_t>(host_count));
+    for (int i = 0; i < host_count; ++i) {
+        keyed.push_back({keys[static_cast<size_t>(i)], vals[static_cast<size_t>(i)]});
+    }
+
+    if (ast.order_by && !ast.order_by->ascending) {
+        std::reverse(keyed.begin(), keyed.end());
+    }
+
+    std::vector<float> result;
+    result.reserve(keyed.size());
+    for (const auto &kv : keyed) {
+        result.push_back(kv.second);
+    }
+    return result;
+}
+
 std::vector<float> execute_group_by(const QueryAST &ast,
                                     const HostTable &table,
                                     const std::vector<int> &rows) {
@@ -292,9 +386,10 @@ std::vector<float> execute_group_by(const QueryAST &ast,
     return result;
 }
 
-void apply_order_by(const QueryAST &ast, const HostTable &table,
-                    const std::vector<int> &rows, std::vector<float> &result) {
-    std::vector<std::pair<float,float>> keyed;
+template <typename T>
+void apply_order_by_typed(const QueryAST &ast, const HostTable &table,
+                          const std::vector<int> &rows, std::vector<T> &result) {
+    std::vector<std::pair<float, T>> keyed;
     for (size_t i = 0; i < rows.size(); ++i) {
         float key = eval_node(ast.order_by->expr.get(), table, rows[i]);
         keyed.push_back({key, result[i]});
@@ -308,7 +403,8 @@ void apply_order_by(const QueryAST &ast, const HostTable &table,
     }
 }
 
-void apply_limit_offset(const QueryAST &ast, std::vector<float> &result) {
+template <typename T>
+void apply_limit_offset_typed(const QueryAST &ast, std::vector<T> &result) {
     if (ast.offset) {
         size_t off = static_cast<size_t>(ast.offset->count);
         if (off >= result.size()) {
@@ -322,9 +418,81 @@ void apply_limit_offset(const QueryAST &ast, std::vector<float> &result) {
     }
 }
 
+template <typename T>
+void apply_distinct_typed(std::vector<T> &result) {
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+}
+
+ColumnData select_typed_column(const HostColumn &col, const std::vector<int> &rows) {
+    switch (col.type) {
+    case DataType::Int32: {
+        const auto &src = std::get<std::vector<int32_t>>(col.data);
+        std::vector<int32_t> out;
+        out.reserve(rows.size());
+        for (int idx : rows) out.push_back(src[idx]);
+        return out;
+    }
+    case DataType::Int64: {
+        const auto &src = std::get<std::vector<int64_t>>(col.data);
+        std::vector<int64_t> out;
+        out.reserve(rows.size());
+        for (int idx : rows) out.push_back(src[idx]);
+        return out;
+    }
+    case DataType::Float32: {
+        const auto &src = std::get<std::vector<float>>(col.data);
+        std::vector<float> out;
+        out.reserve(rows.size());
+        for (int idx : rows) out.push_back(src[idx]);
+        return out;
+    }
+    case DataType::Float64: {
+        const auto &src = std::get<std::vector<double>>(col.data);
+        std::vector<double> out;
+        out.reserve(rows.size());
+        for (int idx : rows) out.push_back(src[idx]);
+        return out;
+    }
+    case DataType::String: {
+        const auto &src = std::get<std::vector<std::string>>(col.data);
+        std::vector<std::string> out;
+        out.reserve(rows.size());
+        for (int idx : rows) out.push_back(src[idx]);
+        return out;
+    }
+    }
+    return std::vector<float>{};
+}
+
+void apply_order_by(const QueryAST &ast, const HostTable &table,
+                    const std::vector<int> &rows, ColumnData &result) {
+    std::visit(
+        [&](auto &vec) {
+            apply_order_by_typed(ast, table, rows, vec);
+        },
+        result);
+}
+
+void apply_limit_offset(const QueryAST &ast, ColumnData &result) {
+    std::visit(
+        [&](auto &vec) {
+            apply_limit_offset_typed(ast, vec);
+        },
+        result);
+}
+
+void apply_distinct(ColumnData &result) {
+    std::visit(
+        [&](auto &vec) {
+            apply_distinct_typed(vec);
+        },
+        result);
+}
+
 } // namespace
 
-std::vector<float> WarpDB::query_sql(const std::string &sql) {
+QueryResult WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
     QueryAST ast;
     try {
@@ -337,14 +505,34 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     for (const auto &c : table_.columns) cols.insert(c.name);
     validate_query_ast(ast, cols);
 
+    if (!ast.joins.empty()) {
+        throw std::runtime_error(
+            "JOIN is parsed but not executed yet. SQL execution currently "
+            "supports single-table queries only.");
+    }
+
     std::vector<int> rows = filter_rows(ast, host_table_);
 
-    std::vector<float> result;
+    ColumnData result = std::vector<float>{};
     if (ast.group_by) {
-        result = execute_group_by(ast, host_table_, rows);
+        if (can_use_gpu_group_sum_fast_path(ast)) {
+            result = execute_group_by_gpu_sum(ast, table_);
+        } else {
+            result = execute_group_by(ast, host_table_, rows);
+        }
     } else {
-        for (int idx : rows) {
-            result.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
+        if (auto *var =
+                dynamic_cast<VariableNode *>(ast.select_list[0].get())) {
+            const HostColumn *col = host_table_.get_column(var->name);
+            if (!col) {
+                throw std::runtime_error("Unknown column in SELECT: " + var->name);
+            }
+            result = select_typed_column(*col, rows);
+        } else {
+            auto &out = std::get<std::vector<float>>(result);
+            for (int idx : rows) {
+                out.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
+            }
         }
         if (ast.order_by) {
             apply_order_by(ast, host_table_, rows, result);
@@ -352,12 +540,11 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
     }
 
     if (ast.distinct) {
-        std::sort(result.begin(), result.end());
-        result.erase(std::unique(result.begin(), result.end()), result.end());
+        apply_distinct(result);
     }
 
     apply_limit_offset(ast, result);
-    return result;
+    return QueryResult(std::move(result));
 }
 
 
@@ -365,13 +552,14 @@ std::vector<float> WarpDB::query_sql(const std::string &sql) {
 void WarpDB::query_arrow(const std::string &expr, ArrowArray *out_array,
                          ArrowSchema *out_schema, bool use_shared_memory,
                          const char* shm_name) {
-    auto result = query(expr);
+    QueryResult qr = query(expr);
+    const auto &result = qr.as<float>();
     export_to_arrow(result.data(), static_cast<int64_t>(result.size()),
                     use_shared_memory, out_array, out_schema, shm_name);
 
 }
 
-std::vector<float> WarpDB::query_multi_gpu(const std::string &expr) {
+QueryResult WarpDB::query_multi_gpu(const std::string &expr) {
     if (host_table_.num_rows() == 0) {
         throw std::runtime_error("Host table not available for multi-GPU query");
     }
@@ -407,12 +595,12 @@ std::vector<float> WarpDB::query_multi_gpu(const std::string &expr) {
         condition_cuda = cond_ast->to_cuda_expr();
     }
 
-    return run_multi_gpu_jit_host(host_table_, expr_cuda, condition_cuda);
+    return QueryResult(run_multi_gpu_jit_host(host_table_, expr_cuda, condition_cuda));
 }
 
-std::vector<float> WarpDB::query_multi_gpu_csv(const std::string &csv_path,
-                                               const std::string &expr,
-                                               int rows_per_chunk) {
+QueryResult WarpDB::query_multi_gpu_csv(const std::string &csv_path,
+                                        const std::string &expr,
+                                        int rows_per_chunk) {
     std::string upper = expr;
     for (auto &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
@@ -472,5 +660,5 @@ std::vector<float> WarpDB::query_multi_gpu_csv(const std::string &csv_path,
         all_results.insert(all_results.end(), part.begin(), part.end());
     }
 
-    return all_results;
+    return QueryResult(std::move(all_results));
 }

@@ -4,6 +4,10 @@
 
 namespace py = pybind11;
 
+static py::object column_data_to_python(const ColumnData &data) {
+    return std::visit([](const auto &vec) -> py::object { return py::cast(vec); }, data);
+}
+
 PYBIND11_MODULE(pywarpdb, m) {
     py::enum_<DataType>(m, "DataType")
         .value("Int32", DataType::Int32)
@@ -21,13 +25,24 @@ PYBIND11_MODULE(pywarpdb, m) {
              py::arg("filepath"),
              py::arg("schema") = std::vector<DataType>(),
              py::arg("policy") = ParsePolicy::Strict)
-        .def("query", &WarpDB::query, py::arg("expr"))
-        .def("query_sql", &WarpDB::query_sql, py::arg("sql"),
+        .def("query", [](WarpDB &db, const std::string &expr) {
+                return column_data_to_python(db.query(expr).data());
+             }, py::arg("expr"))
+        .def("query_sql", [](WarpDB &db, const std::string &sql) {
+                return column_data_to_python(db.query_sql(sql).data());
+             }, py::arg("sql"),
              R"pbdoc(Execute a full SQL query supporting GROUP BY and ORDER BY.)pbdoc")
-        .def("query_multi_gpu", &WarpDB::query_multi_gpu,
+        .def("query_multi_gpu", [](WarpDB &db, const std::string &expr) {
+                return column_data_to_python(db.query_multi_gpu(expr).data());
+             },
              py::arg("expr"),
              R"pbdoc(Execute expression using all available GPUs on the current table.)pbdoc")
-        .def_static("query_multi_gpu_csv", &WarpDB::query_multi_gpu_csv,
+        .def_static("query_multi_gpu_csv", [](const std::string &csv_path,
+                                              const std::string &expr,
+                                              int rows_per_chunk) {
+                return column_data_to_python(
+                    WarpDB::query_multi_gpu_csv(csv_path, expr, rows_per_chunk).data());
+             },
                     py::arg("csv_path"), py::arg("expr"),
                     py::arg("rows_per_chunk") = 1000000,
                     R"pbdoc(Stream a CSV file in chunks across all GPUs and return results.)pbdoc")

@@ -101,6 +101,12 @@ target_link_libraries(sql_features_test PRIVATE warpdb_lib)
 
 add_test(NAME sql_features_test COMMAND sql_features_test)
 
+add_executable(join_not_supported_test
+    tests/join_not_supported_test.cpp
+)
+target_link_libraries(join_not_supported_test PRIVATE warpdb_lib)
+add_test(NAME join_not_supported_test COMMAND join_not_supported_test)
+
 add_executable(extended_types_test
     tests/extended_types_test.cpp
 )

@@ -80,20 +80,6 @@ __global__ void print_first_few(float *price, int *quantity, int N) {
   }
 }
 
-__global__ void filter_price_gt(float *price, int *quantity, float *out_price,
-                                int *out_quantity, int *out_count, int N,
-                                float threshold) {
-  int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (idx >= N)
-    return;
-
-  if (price[idx] > threshold) {
-    int write_idx = atomicAdd(out_count, 1);
-    out_price[write_idx] = price[idx];
-    out_quantity[write_idx] = quantity[idx];
-  }
-}
-
 __global__ void project_columns(float *price, int *quantity, float *out_price,
                                 int *out_quantity, int *out_count, int N,
                                 bool select_price, bool select_quantity) {
@@ -108,33 +94,6 @@ __global__ void project_columns(float *price, int *quantity, float *out_price,
     out_quantity[write_idx] = quantity[idx];
 }
 
-__global__ void project_revenue(float *price, int *quantity, float *revenue_out,
-                                int *out_count, int N, float threshold) {
-  int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (idx >= N)
-    return;
-
-  if (price[idx] > threshold) {
-    int write_idx = atomicAdd(out_count, 1);
-    revenue_out[write_idx] = price[idx] * quantity[idx];
-  }
-}
-
-__global__ void project_revenue_and_adjusted(float *price, int *quantity,
-                                             float *revenue_out,
-                                             float *adjusted_price_out,
-                                             int *out_count, int N,
-                                             float threshold) {
-  int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (idx >= N)
-    return;
-
-  if (price[idx] > threshold) {
-    int write_idx = atomicAdd(out_count, 1);
-    revenue_out[write_idx] = price[idx] * quantity[idx];
-    adjusted_price_out[write_idx] = price[idx] - 10.0f;
-  }
-}
 
 int main(int argc, char **argv) {
   try {
@@ -175,24 +134,13 @@ int main(int argc, char **argv) {
   };
   std::unique_ptr<Table, TableDeleter> table_guard(&table);
 
-  DeviceBuffer<int> d_quantity_filtered(table.num_rows);
-  DeviceBuffer<int> d_count(1);
   DeviceBuffer<int> d_selected_quantity(table.num_rows);
   DeviceBuffer<int> d_select_count(1);
-  DeviceBuffer<int> d_revenue_count(1);
-  DeviceBuffer<int> d_multi_count(1);
 
-  DeviceBuffer<float> d_price_filtered(table.num_rows);
   DeviceBuffer<float> d_selected_price(table.num_rows);
-  DeviceBuffer<float> d_revenue(table.num_rows);
-  DeviceBuffer<float> d_revenue_multi(table.num_rows);
-  DeviceBuffer<float> d_adjusted_price(table.num_rows);
   DeviceBuffer<float> d_jit_output(table.num_rows);
 
-  int h_count;
   int h_select_count;
-  int h_revenue_count;
-  int h_multi_count;
 
   bool select_price = true;
   bool select_quantity = true;
@@ -200,43 +148,13 @@ int main(int argc, char **argv) {
   int threads = 128;
   int blocks = (table.num_rows + threads - 1) / threads;
 
-  float threshold = 25.0f;
-
-  CUDA_CHECK(cudaMemset(d_revenue_count.get(), 0, sizeof(int)));
-  CUDA_CHECK(cudaMemset(d_count.get(), 0, sizeof(int)));
   CUDA_CHECK(cudaMemset(d_select_count.get(), 0, sizeof(int)));
-  CUDA_CHECK(cudaMemset(d_multi_count.get(), 0, sizeof(int)));
   std::cout << "Allocated space\n";
 
 
   print_first_few<<<1, 4>>>(d_price, d_quantity, table.num_rows);
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaDeviceSynchronize());
-
-  filter_price_gt<<<blocks, threads>>>(d_price, d_quantity,
-                                       d_price_filtered.get(),
-                                       d_quantity_filtered.get(), d_count.get(),
-                                       table.num_rows, threshold);
-  CUDA_CHECK(cudaGetLastError());
-
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  CUDA_CHECK(cudaMemcpy(&h_count, d_count.get(), sizeof(int),
-                        cudaMemcpyDeviceToHost));
-  std::cout << "Filtered rows: " << h_count << "\n";
-
-  std::vector<float> h_price_filtered(h_count);
-  std::vector<int> h_quantity_filtered(h_count);
-  CUDA_CHECK(cudaMemcpy(h_price_filtered.data(), d_price_filtered.get(),
-                        sizeof(float) * h_count, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_quantity_filtered.data(),
-                        d_quantity_filtered.get(), sizeof(int) * h_count,
-                        cudaMemcpyDeviceToHost));
-  for (int i = 0; i < h_count; ++i) {
-    std::cout << "Filtered Row " << i << ": price = "
-              << h_price_filtered[i] << ", quantity = "
-              << h_quantity_filtered[i] << "\n";
-  }
 
   std::cout << "\nRunning SELECT projection:\n";
 
@@ -264,54 +182,6 @@ int main(int argc, char **argv) {
     if (select_quantity)
       std::cout << ", quantity = " << h_selected_quantity[i];
     std::cout << "\n";
-  }
-
-  std::cout << "\nRunning SELECT revenue (price * quantity) with WHERE price > "
-               "threshold:\n";
-
-  project_revenue<<<blocks, threads>>>(d_price, d_quantity,
-      d_revenue.get(), d_revenue_count.get(), table.num_rows, threshold);
-  CUDA_CHECK(cudaGetLastError());
-
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  CUDA_CHECK(cudaMemcpy(&h_revenue_count, d_revenue_count.get(), sizeof(int),
-                        cudaMemcpyDeviceToHost));
-  std::cout << "Computed revenue rows: " << h_revenue_count << "\n";
-
-  std::vector<float> h_revenue(h_revenue_count);
-  CUDA_CHECK(cudaMemcpy(h_revenue.data(), d_revenue.get(),
-                        sizeof(float) * h_revenue_count,
-                        cudaMemcpyDeviceToHost));
-
-  for (int i = 0; i < h_revenue_count; ++i) {
-    std::cout << "Revenue Row " << i << ": revenue = " << h_revenue[i] << "\n";
-  }
-
-  std::cout << "\nRunning SELECT revenue and adjusted_price:\n";
-  project_revenue_and_adjusted<<<blocks, threads>>>(
-      d_price, d_quantity,
-      d_revenue_multi.get(), d_adjusted_price.get(), d_multi_count.get(),
-      table.num_rows, threshold);
-  CUDA_CHECK(cudaGetLastError());
-
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  CUDA_CHECK(cudaMemcpy(&h_multi_count, d_multi_count.get(), sizeof(int),
-                        cudaMemcpyDeviceToHost));
-  std::vector<float> h_revenue_multi(h_multi_count);
-  std::vector<float> h_adjusted_price(h_multi_count);
-  CUDA_CHECK(cudaMemcpy(h_revenue_multi.data(), d_revenue_multi.get(),
-                        sizeof(float) * h_multi_count,
-                        cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_adjusted_price.data(), d_adjusted_price.get(),
-                        sizeof(float) * h_multi_count,
-                        cudaMemcpyDeviceToHost));
-
-  std::cout << "Computed multi-expression rows: " << h_multi_count << "\n";
-  for (int i = 0; i < h_multi_count; ++i) {
-    std::cout << "Row " << i << ": revenue = " << h_revenue_multi[i]
-              << ", adjusted price = " << h_adjusted_price[i] << "\n";
   }
 
   std::cout << "\n[ Optimizer Demo ]\n";
