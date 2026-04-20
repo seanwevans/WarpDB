@@ -60,9 +60,10 @@ public:
     // Example: "price * quantity WHERE price > 10"
     QueryResult query(const std::string &expr);
 
-    // Execute a full SQL query supporting GROUP BY and ORDER BY.
-    // Currently JOIN loads the same table for demonstration purposes.
-    QueryResult query_sql(const std::string &sql);
+    // Execute a full SQL query supporting WHERE/GROUP BY/HAVING/ORDER BY,
+    // DISTINCT/LIMIT/OFFSET on a single loaded table.
+    // JOIN clauses are parsed by the SQL frontend but are not executed yet.
+    std::vector<float> query_sql(const std::string &sql);
 
     // Execute a query using all available GPUs on the data loaded in this
     // WarpDB instance. Falls back to single-GPU execution when only one device
