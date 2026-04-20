@@ -496,8 +496,13 @@ QueryAST Parser::parse_query() {
     size_t start = current;
     while (current < end &&
            !(toks[current].type == TokenType::Keyword &&
-             (toks[current].value == "ASC" ||
-              toks[current].value == "DESC")))
+             (toks[current].value == "ASC" || toks[current].value == "DESC" ||
+              toks[current].value == "LIMIT" ||
+              toks[current].value == "OFFSET" ||
+              toks[current].value == "HAVING" ||
+              toks[current].value == "GROUP" ||
+              toks[current].value == "WHERE" ||
+              toks[current].value == "JOIN")))
       current++;
     std::vector<Token> ord(toks.begin() + start, toks.begin() + current);
     ord.push_back({TokenType::End, "", 0, 0});
