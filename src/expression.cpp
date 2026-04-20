@@ -72,14 +72,54 @@ std::vector<Token> tokenize(const std::string &input) {
       int start_col = column;
       int start_line = line;
       std::string num;
-      bool has_dot = false;
+
       while (i < input.size() &&
-             (std::isdigit(static_cast<unsigned char>(input[i])) ||
-              (!has_dot && input[i] == '.'))) {
-        if (input[i] == '.') has_dot = true;
+             std::isdigit(static_cast<unsigned char>(input[i]))) {
         num += input[i];
         advance_char(input[i]);
         i++;
+      }
+
+      if (i < input.size() && input[i] == '.') {
+        num += input[i];
+        advance_char(input[i]);
+        i++;
+
+        while (i < input.size() &&
+               std::isdigit(static_cast<unsigned char>(input[i]))) {
+          num += input[i];
+          advance_char(input[i]);
+          i++;
+        }
+      }
+
+      if (i < input.size() && (input[i] == 'e' || input[i] == 'E')) {
+        int exp_line = line;
+        int exp_col = column;
+        num += input[i];
+        advance_char(input[i]);
+        i++;
+
+        if (i < input.size() && (input[i] == '+' || input[i] == '-')) {
+          num += input[i];
+          advance_char(input[i]);
+          i++;
+        }
+
+        if (i >= input.size() ||
+            !std::isdigit(static_cast<unsigned char>(input[i]))) {
+          std::string msg =
+              "Malformed exponent in numeric literal at line " +
+              std::to_string(exp_line) + " column " + std::to_string(exp_col);
+          throw std::runtime_error(msg);
+        }
+
+        while (i < input.size() &&
+               std::isdigit(static_cast<unsigned char>(input[i]))) {
+          num += input[i];
+          advance_char(input[i]);
+          i++;
+        }
       }
       tokens.push_back({TokenType::Number, num, start_line, start_col});
     } else if (input[i] == '>' || input[i] == '<' || input[i] == '=' ||

@@ -93,6 +93,13 @@ add_executable(parsing_error_tests
 
 add_test(NAME parsing_error_tests COMMAND parsing_error_tests)
 
+add_executable(tokenizer_tests
+    tests/tokenizer_tests.cpp
+    src/expression.cpp
+)
+
+add_test(NAME tokenizer_tests COMMAND tokenizer_tests)
+
 
 add_executable(sql_features_test
     tests/sql_features_test.cpp
