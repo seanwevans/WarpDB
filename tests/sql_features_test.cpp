@@ -97,5 +97,17 @@ int main(){
         assert(std::abs(float_group_desc[i] - expected_desc[i]) < 1e-5);
     }
 
+    bool multi_key_group_by_threw = false;
+    try {
+        (void)db.query_sql(
+            "SELECT SUM(price) FROM test GROUP BY quantity, price ORDER BY quantity ASC");
+    } catch (const std::runtime_error &e) {
+        multi_key_group_by_threw =
+            std::string(e.what()).find(
+                "GROUP BY in query_sql currently supports exactly one key expression") !=
+            std::string::npos;
+    }
+    assert(multi_key_group_by_threw);
+
     return 0;
 }
