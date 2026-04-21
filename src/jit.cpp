@@ -13,6 +13,8 @@
 #include <thrust/reduce.h>
 #include <thrust/sort.h>
 #include <thrust/system/cuda/execution_policy.h>
+#include <thrust/transform.h>
+#include <thrust/iterator/constant_iterator.h>
 #include <unordered_map>
 #include <vector>
 #include <mutex>
@@ -473,6 +475,147 @@ void jit_group_sum(const std::string &val_expr_code,
   int host_count = static_cast<int>(reduce_end.first - out_keys_begin);
   CUDA_RUNTIME_CHECK(
       cudaMemcpy(d_count, &host_count, sizeof(int), cudaMemcpyHostToDevice));
+}
+
+template <typename T> struct DeviceToFloat {
+  __host__ __device__ float operator()(T v) const {
+    return static_cast<float>(v);
+  }
+};
+
+template <typename T> struct DeviceToInt64 {
+  __host__ __device__ int64_t operator()(T v) const {
+    return static_cast<int64_t>(v);
+  }
+};
+
+template <typename KeyT, typename ValueT, typename ReduceOp>
+int jit_group_reduce_impl(const void *d_keys_raw, const void *d_values_raw,
+                          int64_t *d_out_keys, float *d_out_vals, int N,
+                          ReduceOp reduce_op) {
+  auto exec_policy = thrust::cuda::par.on(0);
+  const auto *d_keys = static_cast<const KeyT *>(d_keys_raw);
+  const auto *d_values = static_cast<const ValueT *>(d_values_raw);
+
+  DeviceBuffer<KeyT> tmp_keys(static_cast<size_t>(N));
+  DeviceBuffer<float> tmp_vals(static_cast<size_t>(N));
+  CUDA_RUNTIME_CHECK(cudaMemcpy(tmp_keys.get(), d_keys, sizeof(KeyT) * static_cast<size_t>(N),
+                                cudaMemcpyDeviceToDevice));
+  thrust::transform(exec_policy, d_values, d_values + N,
+                    thrust::device_pointer_cast(tmp_vals.get()),
+                    DeviceToFloat<ValueT>());
+
+  auto tmp_keys_begin = thrust::device_pointer_cast(tmp_keys.get());
+  auto tmp_vals_begin = thrust::device_pointer_cast(tmp_vals.get());
+  thrust::sort_by_key(exec_policy, tmp_keys_begin, tmp_keys_begin + N, tmp_vals_begin);
+
+  DeviceBuffer<KeyT> reduced_keys(static_cast<size_t>(N));
+  auto reduced_keys_begin = thrust::device_pointer_cast(reduced_keys.get());
+  auto out_vals_begin = thrust::device_pointer_cast(d_out_vals);
+  auto reduce_end = thrust::reduce_by_key(exec_policy, tmp_keys_begin, tmp_keys_begin + N,
+                                          tmp_vals_begin, reduced_keys_begin,
+                                          out_vals_begin, thrust::equal_to<KeyT>(),
+                                          reduce_op);
+  int host_count = static_cast<int>(reduce_end.first - reduced_keys_begin);
+  thrust::transform(exec_policy, reduced_keys_begin, reduced_keys_begin + host_count,
+                    thrust::device_pointer_cast(d_out_keys), DeviceToInt64<KeyT>());
+  return host_count;
+}
+
+template <typename KeyT>
+int jit_group_count_impl(const void *d_keys_raw, int64_t *d_out_keys,
+                         float *d_out_counts, int N) {
+  auto exec_policy = thrust::cuda::par.on(0);
+  const auto *d_keys = static_cast<const KeyT *>(d_keys_raw);
+
+  DeviceBuffer<KeyT> tmp_keys(static_cast<size_t>(N));
+  CUDA_RUNTIME_CHECK(cudaMemcpy(tmp_keys.get(), d_keys, sizeof(KeyT) * static_cast<size_t>(N),
+                                cudaMemcpyDeviceToDevice));
+  auto tmp_keys_begin = thrust::device_pointer_cast(tmp_keys.get());
+  thrust::sort(exec_policy, tmp_keys_begin, tmp_keys_begin + N);
+
+  DeviceBuffer<KeyT> reduced_keys(static_cast<size_t>(N));
+  DeviceBuffer<int> reduced_counts(static_cast<size_t>(N));
+  auto reduced_keys_begin = thrust::device_pointer_cast(reduced_keys.get());
+  auto reduced_counts_begin = thrust::device_pointer_cast(reduced_counts.get());
+  auto reduce_end = thrust::reduce_by_key(
+      exec_policy, tmp_keys_begin, tmp_keys_begin + N,
+      thrust::make_constant_iterator(1), reduced_keys_begin, reduced_counts_begin);
+
+  int host_count = static_cast<int>(reduce_end.first - reduced_keys_begin);
+  thrust::transform(exec_policy, reduced_keys_begin, reduced_keys_begin + host_count,
+                    thrust::device_pointer_cast(d_out_keys), DeviceToInt64<KeyT>());
+  thrust::transform(exec_policy, reduced_counts_begin, reduced_counts_begin + host_count,
+                    thrust::device_pointer_cast(d_out_counts), DeviceToFloat<int>());
+  return host_count;
+}
+
+int jit_group_reduce_by_key(const void *d_keys, DataType key_type,
+                            const void *d_values, DataType value_type,
+                            GroupReduceOp op, int64_t *d_out_keys,
+                            float *d_out_vals, int N, int device_id) {
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+  if (N <= 0) return 0;
+
+  if (key_type == DataType::Int32) {
+    switch (value_type) {
+    case DataType::Int32:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int32_t, int32_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int32_t, int32_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int32_t, int32_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::Int64:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int32_t, int64_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int32_t, int64_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int32_t, int64_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::Float32:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int32_t, float>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int32_t, float>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int32_t, float>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::Float64:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int32_t, double>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int32_t, double>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int32_t, double>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::String:
+      break;
+    }
+  } else if (key_type == DataType::Int64) {
+    switch (value_type) {
+    case DataType::Int32:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int64_t, int32_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int64_t, int32_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int64_t, int32_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::Int64:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int64_t, int64_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int64_t, int64_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int64_t, int64_t>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::Float32:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int64_t, float>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int64_t, float>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int64_t, float>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::Float64:
+      if (op == GroupReduceOp::Sum) return jit_group_reduce_impl<int64_t, double>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::plus<float>());
+      if (op == GroupReduceOp::Min) return jit_group_reduce_impl<int64_t, double>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::minimum<float>());
+      return jit_group_reduce_impl<int64_t, double>(d_keys, d_values, d_out_keys, d_out_vals, N, thrust::maximum<float>());
+    case DataType::String:
+      break;
+    }
+  }
+
+  throw std::runtime_error("jit_group_reduce_by_key requires integer keys and numeric values");
+}
+
+int jit_group_count_by_key(const void *d_keys, DataType key_type,
+                           int64_t *d_out_keys, float *d_out_counts, int N,
+                           int device_id) {
+  CUDA_RUNTIME_CHECK(cudaSetDevice(device_id));
+  if (N <= 0) return 0;
+  if (key_type == DataType::Int32) {
+    return jit_group_count_impl<int32_t>(d_keys, d_out_keys, d_out_counts, N);
+  }
+  if (key_type == DataType::Int64) {
+    return jit_group_count_impl<int64_t>(d_keys, d_out_keys, d_out_counts, N);
+  }
+  throw std::runtime_error("jit_group_count_by_key requires integer keys");
 }
 
 void jit_sort_pairs(int *d_keys, float *d_vals, int count, bool ascending,
