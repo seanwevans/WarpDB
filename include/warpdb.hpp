@@ -14,20 +14,34 @@
 
 class QueryResult {
 public:
-    QueryResult() : data_(std::vector<float>{}) {}
-    explicit QueryResult(ColumnData data) : data_(std::move(data)) {}
+    QueryResult() : columns_{std::vector<float>{}} {}
+    explicit QueryResult(ColumnData data) : columns_{std::move(data)} {}
+    explicit QueryResult(std::vector<ColumnData> columns)
+        : columns_(std::move(columns)) {
+        if (columns_.empty()) {
+            columns_.emplace_back(std::vector<float>{});
+        }
+    }
 
     size_t size() const {
-        return std::visit([](const auto &v) { return v.size(); }, data_);
+        return std::visit([](const auto &v) { return v.size(); }, columns_.front());
     }
 
     bool empty() const { return size() == 0; }
 
-    const ColumnData &data() const { return data_; }
+    size_t column_count() const { return columns_.size(); }
+
+    const ColumnData &data() const { return columns_.front(); }
+    const ColumnData &column_data(size_t idx) const { return columns_.at(idx); }
 
     template <typename T>
     const std::vector<T> &as() const {
-        return std::get<std::vector<T>>(data_);
+        return std::get<std::vector<T>>(columns_.front());
+    }
+
+    template <typename T>
+    const std::vector<T> &column_as(size_t idx) const {
+        return std::get<std::vector<T>>(columns_.at(idx));
     }
 
     float operator[](size_t idx) const {
@@ -42,11 +56,11 @@ public:
                     return static_cast<float>(v[idx]);
                 }
             },
-            data_);
+            columns_.front());
     }
 
 private:
-    ColumnData data_;
+    std::vector<ColumnData> columns_;
 };
 
 class WarpDB {
@@ -62,7 +76,7 @@ public:
 
     // Execute a full SQL query supporting WHERE/GROUP BY/HAVING/ORDER BY,
     // DISTINCT/LIMIT/OFFSET on a single loaded table.
-    // JOIN clauses are parsed by the SQL frontend but are not executed yet.
+    // JOIN clauses are currently rejected during SQL AST generation.
     QueryResult query_sql(const std::string &sql);
 
     // Execute a query using all available GPUs on the data loaded in this
