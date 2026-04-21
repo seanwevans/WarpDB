@@ -329,6 +329,11 @@ std::vector<float> execute_group_by_gpu_sum(const QueryAST &ast, const Table &ta
 std::vector<float> execute_group_by(const QueryAST &ast,
                                     const HostTable &table,
                                     const std::vector<int> &rows) {
+    if (!ast.group_by || ast.group_by->keys.size() != 1) {
+        throw std::runtime_error(
+            "GROUP BY in query_sql currently supports exactly one key expression");
+    }
+
     auto *agg = dynamic_cast<AggregationNode *>(ast.select_list[0].get());
     if (!agg) throw std::runtime_error("Only aggregation queries supported with GROUP BY");
 
@@ -499,6 +504,10 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
     if (!ast.group_by && ast.select_list.size() > 1) {
         throw std::runtime_error(
             "Multiple SELECT expressions are not yet supported in query_sql");
+    }
+    if (ast.group_by && ast.group_by->keys.size() != 1) {
+        throw std::runtime_error(
+            "GROUP BY in query_sql currently supports exactly one key expression");
     }
 
     if (!ast.joins.empty()) {
