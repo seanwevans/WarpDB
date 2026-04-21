@@ -13,6 +13,7 @@
 #include "optimizer.hpp"
 #include "multi_gpu_utils.hpp"
 #include "cuda_utils.hpp"
+#include "warpdb.hpp"
 
 // Convenience wrapper that loads a CSV and prints the results.
 void run_multi_gpu_jit(const std::string &csv_path,
@@ -102,145 +103,20 @@ __global__ void project_columns(float *price, int *quantity, float *out_price,
 int main(int argc, char **argv) {
   try {
     if (argc < 2) {
-      std::cerr << "Usage: ./warpdb \"<expression>\" [data_file]\n";
+      std::cerr << "Usage: ./warpdb \"<sql_query>\" [data_file]\n";
       return 1;
     }
-    std::string user_query = argv[1];
+    std::string sql_query = argv[1];
     std::string csv_path = "data/test.csv";
     if (argc >= 3)
       csv_path = argv[2];
-  auto tokens = tokenize(user_query);
-  auto split = split_where_clause_tokens(tokens);
+    WarpDB db(csv_path);
+    auto results = db.query_sql(sql_query);
 
-  auto expr_ast_preview = parse_expression(split.expression_tokens);
-  std::cout << "Expr (CUDA): " << expr_ast_preview->to_cuda_expr() << "\n";
-  if (split.has_where) {
-    auto where_ast_preview = parse_expression(split.where_tokens);
-    std::cout << "Where (CUDA): " << where_ast_preview->to_cuda_expr() << "\n";
-  }
-
-  Table table = load_csv_to_gpu(csv_path);
-  std::cout << "Loaded " << table.num_rows << " rows.\n";
-  float *d_price = table.get_column_ptr<float>("price");
-  int *d_quantity = table.get_column_ptr<int>("quantity");
-
-  struct TableDeleter {
-    void operator()(Table *t) const {
-      if (!t) return;
-      for (auto &col : t->columns) col.device_ptr.reset();
+    std::cout << "Query returned " << results.size() << " rows.\n";
+    for (size_t i = 0; i < results.size(); ++i) {
+      std::cout << "Result[" << i << "] = " << results[i] << "\n";
     }
-  };
-  std::unique_ptr<Table, TableDeleter> table_guard(&table);
-
-  DeviceBuffer<int> d_selected_quantity(table.num_rows);
-  DeviceBuffer<int> d_select_count(1);
-
-  DeviceBuffer<float> d_selected_price(table.num_rows);
-  DeviceBuffer<float> d_jit_output(table.num_rows);
-
-  int h_select_count;
-
-  bool select_price = true;
-  bool select_quantity = true;
-
-  int threads = 128;
-  int blocks = (table.num_rows + threads - 1) / threads;
-
-  CUDA_CHECK(cudaMemset(d_select_count.get(), 0, sizeof(int)));
-  std::cout << "Allocated space\n";
-
-
-  print_first_few<<<1, 4>>>(d_price, d_quantity, table.num_rows);
-  CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  std::cout << "\nRunning SELECT projection:\n";
-
-  project_columns<<<blocks, threads>>>(d_price, d_quantity,
-      d_selected_price.get(), d_selected_quantity.get(), d_select_count.get(),
-      table.num_rows, select_price, select_quantity);
-  CUDA_CHECK(cudaGetLastError());
-
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  CUDA_CHECK(cudaMemcpy(&h_select_count, d_select_count.get(), sizeof(int),
-                        cudaMemcpyDeviceToHost));
-  std::cout << "Selected rows: " << h_select_count << "\n";
-
-  std::vector<float> h_selected_price(h_select_count);
-  std::vector<int> h_selected_quantity(h_select_count);
-  CUDA_CHECK(cudaMemcpy(h_selected_price.data(), d_selected_price.get(),
-                        sizeof(float) * h_select_count, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(h_selected_quantity.data(), d_selected_quantity.get(),
-                        sizeof(int) * h_select_count, cudaMemcpyDeviceToHost));
-  for (int i = 0; i < h_select_count; ++i) {
-    std::cout << "Selected Row " << i;
-    if (select_price)
-      std::cout << ", price = " << h_selected_price[i];
-    if (select_quantity)
-      std::cout << ", quantity = " << h_selected_quantity[i];
-    std::cout << "\n";
-  }
-
-  std::cout << "\n[ Optimizer Demo ]\n";
-  execute_query_optimized(split.expression_tokens, split.where_tokens, table);
-
-
-  std::string condition_cuda;
-  if (split.has_where) {
-    auto cond_ast = parse_expression(split.where_tokens);
-    condition_cuda = cond_ast->to_cuda_expr();
-  }
-
-  std::cout << "\nTokenized Expression:\n";
-  for (auto &tok : tokens) {
-    std::cout << "  ["
-              << (tok.type == TokenType::Identifier ? "ID"
-                  : tok.type == TokenType::Number   ? "NUM"
-                  : tok.type == TokenType::Operator ? "OP"
-                                                    : "END")
-              << "] " << tok.value << "\n";
-  }
-
-  // parse
-  auto ast = parse_expression(split.expression_tokens);
-  std::cout << "\nParsed Expression (CUDA):\n";
-
-  std::string expr_cuda = ast->to_cuda_expr();
-  std::cout << expr_cuda << "\n";
-
-  // compile
-  std::cout << "\n[ JIT Kernel Execution for Expression ]\n";
-
-
-  // Launch with block_size=0 so the kernel chooses an occupancy-based block
-  // configuration.
-  jit_compile_and_launch(expr_cuda, condition_cuda, table, d_jit_output.get(),
-                         0, 0);
-
-  std::vector<float> h_jit_output(table.num_rows);
-  CUDA_CHECK(cudaMemcpy(h_jit_output.data(), d_jit_output.get(),
-                        sizeof(float) * table.num_rows,
-                        cudaMemcpyDeviceToHost));
-  for (int i = 0; i < table.num_rows; ++i) {
-    std::cout << "JIT Result[" << i << "] = " << h_jit_output[i] << "\n";
-  }
-
-
-  // Export results to Arrow for external visualization
-  ArrowArray arr;
-  ArrowSchema schema;
-  export_to_arrow(h_jit_output.data(), table.num_rows, false, &arr, &schema);
-  std::cout << "Arrow result length: " << arr.length << "\n";
-  arr.release(&arr);
-  schema.release(&schema);
-
-  std::cout << "\n[ Multi-GPU JIT Example ]\n";
-
-  run_multi_gpu_jit(csv_path, expr_cuda, condition_cuda);
-
-  std::cout << "\n[ Large Multi-GPU Example ]\n";
-  run_multi_gpu_jit_large(csv_path, expr_cuda, condition_cuda, 1024);
 
     return 0;
   } catch (const std::exception &e) {
