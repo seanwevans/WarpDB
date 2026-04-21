@@ -29,7 +29,8 @@ WarpDB consists of the following main components:
 - Handles data type conversion and memory allocation
 
 ### JSON Loader
-- Parses newline-delimited JSON records containing `price` and `quantity`
+- Parses newline-delimited JSON records with dynamic schema inference
+- Supports optional user-provided JSON schema maps for deterministic typing
 - Uploads parsed columns to GPU memory
 
 
