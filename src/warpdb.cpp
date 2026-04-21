@@ -495,9 +495,9 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
     for (const auto &c : table_.columns) cols.insert(c.name);
     validate_query_ast(ast, cols);
 
-    if (!ast.group_by && ast.select_list.size() > 1) {
+    if (ast.select_list.size() != 1) {
         throw std::runtime_error(
-            "Multiple SELECT expressions are not yet supported in query_sql");
+            "query_sql currently supports a single SELECT expression only");
     }
 
     if (!ast.joins.empty()) {
