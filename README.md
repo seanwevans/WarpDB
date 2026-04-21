@@ -10,7 +10,7 @@ WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage C
 - **Expression Parsing & Code Generation**: Parse SQL-like expressions and automatically generate optimized CUDA code
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
 - **JSON Data Loading**: Read newline-delimited JSON files
-- **Parquet/Arrow/ORC Loading**: Use Apache Arrow to ingest columnar formats
+- **Parquet/Arrow/ORC Loading (Optional)**: Use Apache Arrow (when available at build time) to ingest columnar formats
 - **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
 - **Arrow Columnar Format**: Optionally load data using Apache Arrow for zero-copy
   interoperability with Pandas, PyTorch, and Spark
@@ -62,7 +62,7 @@ WarpDB consists of the following main components:
 - CMake 3.18 or higher
 - C++17 compatible compiler
 - [nlohmann/json](https://github.com/nlohmann/json) for JSON parsing
-- NVIDIA GPU with compute capability 7.0 or higher
+- NVIDIA GPU supported by your installed CUDA toolkit/driver
 - [Optional] Apache Arrow with CUDA support for zero-copy columnar data
 - [Optional] `pybind11` to build the Python module (set `-DWARPDB_BUILD_PYTHON=ON`)
 
@@ -81,9 +81,10 @@ cmake ..  # CMake will locate the CUDA toolkit automatically
 make
 ```
 
-If `pybind11` is detected a `pywarpdb` module is produced in the build
-directory alongside the C++ binaries.  When it is not found the rest of the
-project still builds normally.
+If `WARPDB_BUILD_PYTHON=ON` (default) and `pybind11` is detected, a `pywarpdb`
+module is produced in the build directory alongside the C++ binaries. When
+`pybind11` is not found, C++ targets still build normally and only Python
+bindings are skipped.
 
 ## Testing
 
@@ -93,8 +94,12 @@ tests rely on CUDA and optional libraries like Arrow or pybind11.
 ## Usage
 
 ```bash
-./warpdb "query_expression [WHERE condition]" [data_file]
+./warpdb "<sql_query>" [data_file]
 ```
+
+The CLI entrypoint expects a SQL query string. For expression-style execution
+(for example, `"price * quantity WHERE price > 10"`), use the C++/Python API
+`WarpDB::query`/`WarpDB.query`.
 
 If `data_file` is omitted, WarpDB loads `data/test.csv` by default.
 
@@ -279,12 +284,9 @@ The JIT compiler uses NVIDIA's Runtime Compilation library (NVRTC) to:
 
 ### CUDA Kernels
 
-WarpDB implements several CUDA kernels:
-
-- `filter_price_gt`: Filters rows based on a price threshold
-- `project_columns`: Projects specific columns
-- `project_revenue`: Calculates revenue (price × quantity)
-- `project_revenue_and_adjusted`: Calculates multiple expressions in one pass
+WarpDB primarily relies on JIT-generated CUDA kernels emitted from parsed
+expressions/SQL and compiled at runtime with NVRTC. The repository also
+contains standalone CUDA examples and tests that exercise lower-level kernels.
 
 ### Kernel Launch Error Handling
 
@@ -314,8 +316,10 @@ The project has recently gained several improvements:
 ## Limitations
 
 - Currently supports a limited subset of SQL functionality
-- Only supports simple CSV files with basic data types
-- Basic support for joins, aggregations, ordering, LIMIT and OFFSET clauses, and HAVING filters
+- CSV and JSON paths are the most mature; JSON loading currently expects
+  newline-delimited objects with `price` and `quantity`
+- SQL support includes filtering, aggregations, ordering, LIMIT/OFFSET, and
+  HAVING; JOIN syntax is parsed but execution is not implemented
 - Non-GROUP-BY SQL execution supports only one SELECT expression
 - Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
