@@ -35,15 +35,11 @@ set(WARPDB_SRC
     src/csv_loader.cpp
     src/json_loader.cpp
     src/expression.cpp
-    src/jit.cpp
+    src/jit.cu
     src/arrow_utils.cpp
     src/multi_gpu_utils.cpp
     src/optimizer.cpp
 )
-
-# Ensure JIT compilation units are processed by NVCC so Thrust dispatches to the
-# GPU backend instead of falling back to host execution.
-set_source_files_properties(src/jit.cpp PROPERTIES LANGUAGE CUDA)
 
 
 if(Arrow_FOUND)
@@ -192,40 +188,40 @@ add_test(NAME json_loader_permissive_test COMMAND json_loader_permissive_test)
 
 add_executable(jit_error_test
     tests/jit_error_test.cpp
-    src/jit.cpp
+    src/jit.cu
 )
 target_link_libraries(jit_error_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_error_test COMMAND jit_error_test)
 
 add_executable(jit_arch_test
     tests/jit_arch_test.cpp
-    src/jit.cpp
+    src/jit.cu
 )
 target_link_libraries(jit_arch_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_arch_test COMMAND jit_arch_test)
 
 add_executable(jit_where_zero_test
     tests/jit_where_zero_test.cpp
-    src/jit.cpp
+    src/jit.cu
 )
 target_link_libraries(jit_where_zero_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_where_zero_test COMMAND jit_where_zero_test)
 
 add_executable(jit_sort_parallel_test
     tests/jit_sort_parallel_test.cpp
-    src/jit.cpp
+    src/jit.cu
 )
 target_link_libraries(jit_sort_parallel_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_sort_parallel_test COMMAND jit_sort_parallel_test)
 add_executable(jit_group_sum_test
     tests/jit_group_sum_test.cpp
-    src/jit.cpp
+    src/jit.cu
 )
 target_link_libraries(jit_group_sum_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_group_sum_test COMMAND jit_group_sum_test)
 add_executable(jit_cache_test
     tests/jit_cache_test.cpp
-    src/jit.cpp
+    src/jit.cu
 )
 target_link_libraries(jit_cache_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_cache_test COMMAND jit_cache_test)
@@ -243,7 +239,7 @@ add_library(warpdb_lib STATIC
     src/csv_loader.cpp
     src/json_loader.cpp
     src/expression.cpp
-    src/jit.cpp
+    src/jit.cu
     src/arrow_utils.cpp
     src/multi_gpu_utils.cpp
 )
