@@ -69,8 +69,24 @@ int main(){
     auto offset_beyond = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 2 OFFSET 10");
     assert(offset_beyond.empty());
 
+    auto where_equal = db.query_sql("SELECT price FROM test WHERE price = 20");
+    auto where_double_equal = db.query_sql("SELECT price FROM test WHERE price == 20");
+    assert(where_equal.size() == where_double_equal.size());
+    for (size_t i = 0; i < where_equal.size(); ++i) {
+        assert(std::abs(where_equal[i] - where_double_equal[i]) < 1e-5);
+    }
+
     auto having = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) > 15 ORDER BY quantity ASC");
     assert(having.size() == 3);
+
+    auto having_equal = db.query_sql(
+        "SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) = 20 ORDER BY quantity ASC");
+    auto having_double_equal = db.query_sql(
+        "SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) == 20 ORDER BY quantity ASC");
+    assert(having_equal.size() == having_double_equal.size());
+    for (size_t i = 0; i < having_equal.size(); ++i) {
+        assert(std::abs(having_equal[i] - having_double_equal[i]) < 1e-5);
+    }
 
     auto float_group = db.query_sql(
         "SELECT SUM(price) FROM test GROUP BY price / 10.0 ORDER BY price / 10.0 ASC");
