@@ -1,4 +1,4 @@
-// src/jit.cpp
+// src/jit.cu
 #include "jit.hpp"
 #include <cuda.h>
 #include <cuda_runtime.h>
