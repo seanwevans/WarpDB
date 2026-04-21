@@ -32,6 +32,35 @@ int main() {
         assert(s == expected[i]);
     }
 
+    // Validate upload behavior when total string bytes == 0.
+    HostTable empty_strings_host;
+    HostColumn empty_name_col;
+    empty_name_col.name = "name";
+    empty_name_col.type = DataType::String;
+    empty_name_col.data = std::vector<std::string>{"", "", ""};
+    empty_strings_host.columns.push_back(std::move(empty_name_col));
+
+    HostColumn value_col;
+    value_col.name = "value";
+    value_col.type = DataType::Int32;
+    value_col.data = std::vector<int32_t>{1, 2, 3};
+    empty_strings_host.columns.push_back(std::move(value_col));
+
+    Table empty_strings_device = upload_to_gpu(empty_strings_host);
+    const int32_t* empty_offsets_dev =
+        empty_strings_device.get_column_ptr<int32_t>("name");
+    const char* empty_chars_dev = empty_strings_device.get_string_data("name");
+    assert(empty_offsets_dev != nullptr);
+    assert(empty_chars_dev == nullptr);
+
+    std::vector<int32_t> empty_offsets(empty_strings_host.num_rows() + 1);
+    CUDA_CHECK(cudaMemcpy(empty_offsets.data(), empty_offsets_dev,
+                          sizeof(int32_t) * (empty_strings_host.num_rows() + 1),
+                          cudaMemcpyDeviceToHost));
+    for (int v : empty_offsets) {
+        assert(v == 0);
+    }
+
     // Ensure queries still execute when string columns are present
     WarpDB db("data/string_test.csv", schema);
     auto res = db.query("price + quantity");

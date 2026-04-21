@@ -404,7 +404,9 @@ Table upload_to_gpu(const HostTable &host) {
       void *d_offsets = nullptr;
       void *d_chars = nullptr;
       CUDA_CHECK(cudaMalloc(&d_offsets, sizeof(int32_t) * (N + 1)));
-      CUDA_CHECK(cudaMalloc(&d_chars, total_chars));
+      if (total_chars > 0) {
+        CUDA_CHECK(cudaMalloc(&d_chars, total_chars));
+      }
       CUDA_CHECK(cudaMemcpy(d_offsets, offsets.data(),
                             sizeof(int32_t) * (N + 1), cudaMemcpyHostToDevice));
       if (total_chars > 0) {
