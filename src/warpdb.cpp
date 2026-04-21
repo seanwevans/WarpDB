@@ -686,6 +686,90 @@ float eval_join_node(const ASTNode *node, const HostTable &table, int left_idx,
 
 } // namespace
 
+QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols, const Table &table) {
+    validate_query_ast(ast, cols);
+
+    if (ast.select_list.size() != 1) {
+        throw std::runtime_error(
+            "query_sql currently supports a single SELECT expression only");
+    }
+    if (ast.group_by && ast.group_by->keys.size() != 1) {
+        throw std::runtime_error(
+            "GROUP BY in query_sql currently supports exactly one key expression");
+    }
+    if (!ast.joins.empty()) {
+        if (ast.joins.size() != 1) {
+            throw std::runtime_error(
+                "JOIN execution currently supports exactly one JOIN clause");
+        }
+        if (ast.group_by || ast.having || ast.order_by) {
+            throw std::runtime_error(
+                "JOIN execution currently supports SELECT/WHERE/DISTINCT/LIMIT/OFFSET "
+                "without GROUP BY, HAVING, or ORDER BY");
+        }
+    }
+
+    QueryPlan plan;
+    plan.ast = std::move(ast);
+
+    if (plan.ast.group_by) {
+        if (can_use_gpu_group_fast_path(plan.ast, table)) {
+            plan.execution_kind = PlanExecutionKind::GroupByGpuSum;
+        } else {
+            plan.execution_kind = PlanExecutionKind::GroupByHost;
+        }
+        return plan;
+    }
+
+    if (dynamic_cast<VariableNode *>(plan.ast.select_list[0].get())) {
+        plan.execution_kind = PlanExecutionKind::SelectColumn;
+    } else {
+        plan.execution_kind = PlanExecutionKind::SelectExpression;
+    }
+    return plan;
+}
+
+QueryResult execute_plan(const QueryPlan &plan, const Table &table,
+                         const HostTable &host_table) {
+    std::vector<int> rows = filter_rows(plan.ast, host_table);
+
+    ColumnData result = std::vector<float>{};
+    if (plan.ast.group_by) {
+        if (plan.execution_kind == PlanExecutionKind::GroupByGpuSum) {
+            result = execute_group_by_gpu_fast(plan.ast, table);
+        } else {
+            result = execute_group_by(plan.ast, host_table, rows);
+        }
+    } else {
+        if (plan.execution_kind == PlanExecutionKind::SelectColumn) {
+            auto *var =
+                dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
+            const HostColumn *col = host_table.get_column(var->name);
+            if (!col) {
+                throw std::runtime_error("Unknown column in SELECT: " + var->name);
+            }
+            result = select_typed_column(*col, rows);
+        } else {
+            auto &out = std::get<std::vector<float>>(result);
+            for (int idx : rows) {
+                out.push_back(eval_node(plan.ast.select_list[0].get(), host_table, idx));
+            }
+        }
+        if (plan.ast.order_by) {
+            apply_order_by(plan.ast, host_table, rows, result);
+        }
+    }
+
+    if (plan.ast.distinct) {
+        apply_distinct(result);
+    }
+
+    apply_limit_offset(plan.ast, result);
+    return QueryResult(std::move(result));
+}
+
+} // namespace
+
 QueryResult WarpDB::query_sql(const std::string &sql) {
     auto tokens = tokenize(sql);
     QueryAST ast;
@@ -697,19 +781,17 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
 
     std::unordered_set<std::string> cols;
     for (const auto &c : table_.columns) cols.insert(c.name);
-QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols) {
-    validate_query_ast(ast, cols);
-
-    if (ast.select_list.size() != 1) {
-        throw std::runtime_error(
-            "query_sql currently supports a single SELECT expression only");
-    }
-    if (ast.group_by && ast.group_by->keys.size() != 1) {
-        throw std::runtime_error(
-            "GROUP BY in query_sql currently supports exactly one key expression");
-    }
 
     if (!ast.joins.empty()) {
+        validate_query_ast(ast, cols);
+        if (ast.select_list.size() != 1) {
+            throw std::runtime_error(
+                "query_sql currently supports a single SELECT expression only");
+        }
+        if (ast.joins.size() != 1) {
+            throw std::runtime_error(
+                "JOIN execution currently supports exactly one JOIN clause");
+        }
         if (ast.group_by || ast.having || ast.order_by) {
             throw std::runtime_error(
                 "JOIN execution currently supports SELECT/WHERE/DISTINCT/LIMIT/OFFSET "
@@ -826,80 +908,7 @@ QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols
         return QueryResult(std::move(result));
     }
 
-    QueryPlan plan;
-    plan.ast = std::move(ast);
-
-    if (plan.ast.group_by) {
-        if (can_use_gpu_group_sum_fast_path(plan.ast)) {
-            plan.execution_kind = PlanExecutionKind::GroupByGpuSum;
-        } else {
-            plan.execution_kind = PlanExecutionKind::GroupByHost;
-        }
-        return plan;
-    }
-
-    if (dynamic_cast<VariableNode *>(plan.ast.select_list[0].get())) {
-        plan.execution_kind = PlanExecutionKind::SelectColumn;
-    } else {
-        plan.execution_kind = PlanExecutionKind::SelectExpression;
-    }
-    return plan;
-}
-
-QueryResult execute_plan(const QueryPlan &plan, const Table &table,
-                         const HostTable &host_table) {
-    std::vector<int> rows = filter_rows(plan.ast, host_table);
-
-    ColumnData result = std::vector<float>{};
-    if (plan.ast.group_by) {
-        if (plan.execution_kind == PlanExecutionKind::GroupByGpuSum) {
-            result = execute_group_by_gpu_sum(plan.ast, table);
-        } else {
-            result = execute_group_by(plan.ast, host_table, rows);
-        }
-    } else {
-        if (plan.execution_kind == PlanExecutionKind::SelectColumn) {
-            auto *var =
-                dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
-            const HostColumn *col = host_table.get_column(var->name);
-            if (!col) {
-                throw std::runtime_error("Unknown column in SELECT: " + var->name);
-            }
-            result = select_typed_column(*col, rows);
-        } else {
-            auto &out = std::get<std::vector<float>>(result);
-            for (int idx : rows) {
-                out.push_back(eval_node(plan.ast.select_list[0].get(), host_table, idx));
-            }
-        }
-        if (plan.ast.order_by) {
-            apply_order_by(plan.ast, host_table, rows, result);
-        }
-    }
-
-    if (plan.ast.distinct) {
-        apply_distinct(result);
-    }
-
-    apply_limit_offset(plan.ast, result);
-    return QueryResult(std::move(result));
-}
-
-} // namespace
-
-QueryResult WarpDB::query_sql(const std::string &sql) {
-    auto tokens = tokenize(sql);
-    QueryAST ast;
-    try {
-        ast = parse_query(tokens);
-    } catch (const std::exception &e) {
-        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
-    }
-
-    std::unordered_set<std::string> cols;
-    for (const auto &c : table_.columns) cols.insert(c.name);
-
-    QueryPlan plan = plan_query(std::move(ast), cols);
+    QueryPlan plan = plan_query(std::move(ast), cols, table_);
     return execute_plan(plan, table_, host_table_);
 }
 
