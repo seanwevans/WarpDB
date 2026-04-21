@@ -20,8 +20,9 @@ void run_multi_gpu_jit(const std::string &csv_path,
                        const std::string &cond_cuda) {
   HostTable host = load_csv_to_host(csv_path);
   auto results = run_multi_gpu_jit_host(host, expr_cuda, cond_cuda);
-  for (size_t i = 0; i < results.size(); ++i) {
-    std::cout << "MultiGPU Result[" << i << "] = " << results[i] << "\n";
+  const auto &out = std::get<std::vector<float>>(results);
+  for (size_t i = 0; i < out.size(); ++i) {
+    std::cout << "MultiGPU Result[" << i << "] = " << out[i] << "\n";
   }
 }
 
@@ -54,18 +55,21 @@ void run_multi_gpu_jit_large(const std::string &csv_path,
 
   bool finished = false;
   std::vector<DataType> schema;
-  std::vector<float> all_results;
+  ColumnData all_results = std::vector<float>{};
   while (!finished) {
     HostTable chunk = load_csv_chunk(file, rows_per_chunk, finished, column_names,
                                      ParsePolicy::Strict, &schema);
     if (chunk.num_rows() == 0 && finished)
       break;
     auto part = run_multi_gpu_jit_host(chunk, expr_cuda, cond_cuda);
-    all_results.insert(all_results.end(), part.begin(), part.end());
+    auto &dst = std::get<std::vector<float>>(all_results);
+    const auto &src = std::get<std::vector<float>>(part);
+    dst.insert(dst.end(), src.begin(), src.end());
   }
 
-  for (size_t i = 0; i < all_results.size(); ++i) {
-    std::cout << "Large MultiGPU Result[" << i << "] = " << all_results[i]
+  const auto &out = std::get<std::vector<float>>(all_results);
+  for (size_t i = 0; i < out.size(); ++i) {
+    std::cout << "Large MultiGPU Result[" << i << "] = " << out[i]
               << "\n";
   }
 }
