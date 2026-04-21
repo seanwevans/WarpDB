@@ -82,33 +82,33 @@ DataType infer_column_type(const std::vector<std::string> &values) {
   bool has_int64 = false;
   bool has_float = false;
   bool saw_non_empty = false;
-  bool numeric_seen = false;
 
   for (const auto &v : values) {
     if (v.empty()) continue;
     saw_non_empty = true;
+    bool parseable_numeric = false;
 
     int32_t i32 = 0;
     if (try_parse_int32(v, i32)) {
-      numeric_seen = true;
+      parseable_numeric = true;
       continue;
     }
 
     int64_t i64 = 0;
     if (try_parse_int64(v, i64)) {
-      numeric_seen = true;
+      parseable_numeric = true;
       has_int64 = true;
       continue;
     }
 
     double d = 0.0;
     if (try_parse_float(v, d)) {
-      numeric_seen = true;
+      parseable_numeric = true;
       has_float = true;
       continue;
     }
 
-    if (!numeric_seen) return DataType::String;
+    if (!parseable_numeric) return DataType::String;
   }
 
   if (!saw_non_empty) return DataType::Float32;

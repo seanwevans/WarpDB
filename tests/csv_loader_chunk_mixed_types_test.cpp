@@ -50,6 +50,34 @@ int main() {
     assert(quantities2[0] == 7 && quantities2[1] == 12);
     assert(finished);
 
+    std::string mixed_numeric_then_text =
+        "metric\n"
+        "1\n"
+        "2\n"
+        "oops\n"
+        "4\n";
+    std::istringstream mixed_stream(mixed_numeric_then_text);
+    std::string mixed_header;
+    std::getline(mixed_stream, mixed_header);
+    std::vector<std::string> mixed_columns = {"metric"};
+
+    bool mixed_finished = false;
+    std::vector<DataType> mixed_schema;
+    HostTable mixed_first =
+        load_csv_chunk(mixed_stream, 2, mixed_finished, mixed_columns, ParsePolicy::Strict, &mixed_schema);
+    assert(mixed_schema.size() == 1);
+    assert(mixed_schema[0] == DataType::Int32);
+    assert(mixed_first.columns[0].type == DataType::Int32);
+    assert(!mixed_finished);
+
+    HostTable mixed_second =
+        load_csv_chunk(mixed_stream, 2, mixed_finished, mixed_columns, ParsePolicy::Strict, &mixed_schema);
+    assert(mixed_schema[0] == DataType::String);
+    assert(mixed_second.columns[0].type == DataType::String);
+    const auto &mixed_values = std::get<std::vector<std::string>>(mixed_second.columns[0].data);
+    assert(mixed_values.size() == 2 && mixed_values[0] == "oops" && mixed_values[1] == "4");
+    assert(mixed_finished);
+
     std::cout << "CSV chunk mixed types test passed\n";
     return 0;
 }
