@@ -41,6 +41,7 @@ float eval_node(const ASTNode *node, const Context &ctx, int idx) {
         if (op == ">=") return l >= r;
         if (op == "<=") return l <= r;
         if (op == "==") return l == r;
+        if (op == "=") return l == r;
         if (op == "!=") return l != r;
     }
     return 0.0f;
@@ -50,4 +51,3 @@ template <typename Context>
 bool eval_condition(const ASTNode *node, const Context &ctx, int idx) {
     return eval_node(node, ctx, idx) != 0.0f;
 }
-

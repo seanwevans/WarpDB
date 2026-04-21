@@ -18,10 +18,22 @@ int main(){
     } catch (const std::runtime_error &e) {
         multiple_expr_threw =
             std::string(e.what()).find(
-                "Multiple SELECT expressions are not yet supported in query_sql") !=
+                "query_sql currently supports a single SELECT expression only") !=
             std::string::npos;
     }
     assert(multiple_expr_threw);
+
+    bool grouped_multiple_expr_threw = false;
+    try {
+        (void)db.query_sql(
+            "SELECT SUM(price), quantity FROM test GROUP BY quantity");
+    } catch (const std::runtime_error &e) {
+        grouped_multiple_expr_threw =
+            std::string(e.what()).find(
+                "query_sql currently supports a single SELECT expression only") !=
+            std::string::npos;
+    }
+    assert(grouped_multiple_expr_threw);
 
     auto res = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity ORDER BY quantity ASC");
 
@@ -70,8 +82,24 @@ int main(){
     auto offset_beyond = db.query_sql("SELECT price FROM test ORDER BY price DESC LIMIT 2 OFFSET 10");
     assert(offset_beyond.empty());
 
+    auto where_equal = db.query_sql("SELECT price FROM test WHERE price = 20");
+    auto where_double_equal = db.query_sql("SELECT price FROM test WHERE price == 20");
+    assert(where_equal.size() == where_double_equal.size());
+    for (size_t i = 0; i < where_equal.size(); ++i) {
+        assert(std::abs(where_equal[i] - where_double_equal[i]) < 1e-5);
+    }
+
     auto having = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) > 15 ORDER BY quantity ASC");
     assert(having.size() == 3);
+
+    auto having_equal = db.query_sql(
+        "SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) = 20 ORDER BY quantity ASC");
+    auto having_double_equal = db.query_sql(
+        "SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) == 20 ORDER BY quantity ASC");
+    assert(having_equal.size() == having_double_equal.size());
+    for (size_t i = 0; i < having_equal.size(); ++i) {
+        assert(std::abs(having_equal[i] - having_double_equal[i]) < 1e-5);
+    }
 
     auto float_group = db.query_sql(
         "SELECT SUM(price) FROM test GROUP BY price / 10.0 ORDER BY price / 10.0 ASC");
@@ -124,6 +152,17 @@ int main(){
         "ORDER BY quantity ASC");
     assert(having_or.size() == 1);
     assert(std::abs(having_or[0] - 50.0f) < 1e-5);
+    bool multi_key_group_by_threw = false;
+    try {
+        (void)db.query_sql(
+            "SELECT SUM(price) FROM test GROUP BY quantity, price ORDER BY quantity ASC");
+    } catch (const std::runtime_error &e) {
+        multi_key_group_by_threw =
+            std::string(e.what()).find(
+                "GROUP BY in query_sql currently supports exactly one key expression") !=
+            std::string::npos;
+    }
+    assert(multi_key_group_by_threw);
 
     return 0;
 }
