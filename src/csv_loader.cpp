@@ -447,6 +447,7 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
 
   finished = false;
   int count = 0;
+  int input_row = 0;
   std::string line;
   std::vector<std::vector<std::string>> rows;
   while (count < max_rows) {
@@ -456,6 +457,20 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     }
     if (line.empty())
       continue;
+    ++input_row;
+
+    const size_t delimiter_count =
+        static_cast<size_t>(std::count(line.begin(), line.end(), ','));
+    const size_t field_count = delimiter_count + 1;
+    if (field_count != column_names.size()) {
+      std::cerr << "Row " << input_row << " has " << field_count
+                << " fields but " << column_names.size() << " were expected"
+                << std::endl;
+      if (policy == ParsePolicy::Strict) {
+        throw std::runtime_error("Incorrect number of fields in row");
+      }
+      continue;
+    }
 
     std::stringstream ss(line);
     std::string val;
