@@ -63,77 +63,114 @@ ArrowTable load_csv_arrow(const std::string &filepath) {
 
 
 namespace {
-Table table_from_arrow(std::shared_ptr<arrow::Table> table) {
-  auto price_array = std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("price")->chunk(0));
-  auto quantity_array = std::static_pointer_cast<arrow::Int32Array>(table->GetColumnByName("quantity")->chunk(0));
-  int64_t N = table->num_rows();
 
-  float *d_price;
-  int *d_quantity;
-  CUDA_CHECK(cudaMalloc(&d_price, sizeof(float) * N));
-  CUDA_CHECK(cudaMalloc(&d_quantity, sizeof(int) * N));
+DataType data_type_from_arrow(const std::shared_ptr<arrow::DataType> &type) {
+  switch (type->id()) {
+  case arrow::Type::INT32:
+    return DataType::Int32;
+  case arrow::Type::INT64:
+    return DataType::Int64;
+  case arrow::Type::FLOAT:
+    return DataType::Float32;
+  case arrow::Type::DOUBLE:
+    return DataType::Float64;
+  case arrow::Type::STRING:
+  case arrow::Type::LARGE_STRING:
+    return DataType::String;
+  default:
+    throw std::runtime_error("Unsupported Arrow column type: " + type->ToString());
+  }
+}
 
-  std::vector<float> h_price(N);
-  std::vector<int> h_quantity(N);
-  for (int64_t i = 0; i < N; ++i) {
-    h_price[i] = static_cast<float>(price_array->Value(i));
-    h_quantity[i] = quantity_array->Value(i);
+HostColumn host_column_from_arrow(const std::string &name,
+                                  const std::shared_ptr<arrow::Array> &array,
+                                  DataType type) {
+  HostColumn col;
+  col.name = name;
+  col.type = type;
+
+  const int64_t N = array->length();
+  switch (type) {
+  case DataType::Int32: {
+    auto typed = std::static_pointer_cast<arrow::Int32Array>(array);
+    std::vector<int32_t> values(static_cast<size_t>(N));
+    for (int64_t i = 0; i < N; ++i) {
+      values[static_cast<size_t>(i)] = typed->IsNull(i) ? 0 : typed->Value(i);
+    }
+    col.data = std::move(values);
+    break;
+  }
+  case DataType::Int64: {
+    auto typed = std::static_pointer_cast<arrow::Int64Array>(array);
+    std::vector<int64_t> values(static_cast<size_t>(N));
+    for (int64_t i = 0; i < N; ++i) {
+      values[static_cast<size_t>(i)] = typed->IsNull(i) ? 0 : typed->Value(i);
+    }
+    col.data = std::move(values);
+    break;
+  }
+  case DataType::Float32: {
+    auto typed = std::static_pointer_cast<arrow::FloatArray>(array);
+    std::vector<float> values(static_cast<size_t>(N));
+    for (int64_t i = 0; i < N; ++i) {
+      values[static_cast<size_t>(i)] = typed->IsNull(i) ? 0.0f : typed->Value(i);
+    }
+    col.data = std::move(values);
+    break;
+  }
+  case DataType::Float64: {
+    auto typed = std::static_pointer_cast<arrow::DoubleArray>(array);
+    std::vector<double> values(static_cast<size_t>(N));
+    for (int64_t i = 0; i < N; ++i) {
+      values[static_cast<size_t>(i)] = typed->IsNull(i) ? 0.0 : typed->Value(i);
+    }
+    col.data = std::move(values);
+    break;
+  }
+  case DataType::String: {
+    std::vector<std::string> values(static_cast<size_t>(N));
+    if (array->type_id() == arrow::Type::STRING) {
+      auto typed = std::static_pointer_cast<arrow::StringArray>(array);
+      for (int64_t i = 0; i < N; ++i) {
+        values[static_cast<size_t>(i)] = typed->IsNull(i) ? "" : typed->GetString(i);
+      }
+    } else {
+      auto typed = std::static_pointer_cast<arrow::LargeStringArray>(array);
+      for (int64_t i = 0; i < N; ++i) {
+        values[static_cast<size_t>(i)] = typed->IsNull(i) ? "" : typed->GetString(i);
+      }
+    }
+    col.data = std::move(values);
+    break;
+  }
   }
 
-  CUDA_CHECK(cudaMemcpy(d_price, h_price.data(), sizeof(float) * N, cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(d_quantity, h_quantity.data(), sizeof(int) * N, cudaMemcpyHostToDevice));
-
-  Table table;
-  table.num_rows = static_cast<int>(N);
-  {
-    ColumnDesc col;
-    col.name = "price";
-    col.type = DataType::Float32;
-    col.device_ptr.reset(d_price);
-    col.length = table.num_rows;
-    table.columns.push_back(std::move(col));
-  }
-  {
-    ColumnDesc col;
-    col.name = "quantity";
-    col.type = DataType::Int32;
-    col.device_ptr.reset(d_quantity);
-    col.length = table.num_rows;
-    table.columns.push_back(std::move(col));
-  }
-  return table;
+  return col;
 }
 
 HostTable host_table_from_arrow(const std::shared_ptr<arrow::Table> &table) {
-  auto price_array =
-      std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("price")->chunk(0));
-  auto quantity_array =
-      std::static_pointer_cast<arrow::Int32Array>(table->GetColumnByName("quantity")->chunk(0));
-  int64_t N = table->num_rows();
+  ARROW_ASSIGN_OR_RAISE(auto combined, table->CombineChunks());
 
   HostTable host;
+  host.columns.reserve(static_cast<size_t>(combined->num_columns()));
 
-  HostColumn price;
-  price.name = "price";
-  price.type = DataType::Float64;
-  std::vector<double> price_vec(static_cast<size_t>(N));
-  for (int64_t i = 0; i < N; ++i) {
-    price_vec[static_cast<size_t>(i)] = price_array->Value(i);
-  }
-  price.data = std::move(price_vec);
-  host.columns.push_back(std::move(price));
+  for (int i = 0; i < combined->num_columns(); ++i) {
+    const auto &field = combined->schema()->field(i);
+    const auto &chunked = combined->column(i);
+    if (chunked->num_chunks() != 1) {
+      throw std::runtime_error("Failed to combine Arrow chunks for column: " + field->name());
+    }
 
-  HostColumn quantity;
-  quantity.name = "quantity";
-  quantity.type = DataType::Int32;
-  std::vector<int32_t> qty_vec(static_cast<size_t>(N));
-  for (int64_t i = 0; i < N; ++i) {
-    qty_vec[static_cast<size_t>(i)] = quantity_array->Value(i);
+    const auto type = data_type_from_arrow(field->type());
+    host.columns.push_back(
+        host_column_from_arrow(field->name(), chunked->chunk(0), type));
   }
-  quantity.data = std::move(qty_vec);
-  host.columns.push_back(std::move(quantity));
 
   return host;
+}
+
+Table table_from_arrow(const std::shared_ptr<arrow::Table> &table) {
+  return upload_to_gpu(host_table_from_arrow(table));
 }
 } // namespace
 
