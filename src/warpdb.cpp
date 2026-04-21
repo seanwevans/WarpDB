@@ -174,6 +174,18 @@ void validate_query_ast(const QueryAST &ast, const std::unordered_set<std::strin
     }
 }
 
+enum class PlanExecutionKind {
+    GroupByGpuSum,
+    GroupByHost,
+    SelectColumn,
+    SelectExpression
+};
+
+struct QueryPlan {
+    QueryAST ast;
+    PlanExecutionKind execution_kind = PlanExecutionKind::SelectExpression;
+};
+
 std::vector<int> filter_rows(const QueryAST &ast, const HostTable &table) {
     std::vector<int> rows;
     int N = table.num_rows();
@@ -488,19 +500,7 @@ void apply_distinct(ColumnData &result) {
         result);
 }
 
-} // namespace
-
-QueryResult WarpDB::query_sql(const std::string &sql) {
-    auto tokens = tokenize(sql);
-    QueryAST ast;
-    try {
-        ast = parse_query(tokens);
-    } catch (const std::exception &e) {
-        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
-    }
-
-    std::unordered_set<std::string> cols;
-    for (const auto &c : table_.columns) cols.insert(c.name);
+QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols) {
     validate_query_ast(ast, cols);
 
     if (ast.select_list.size() != 1) {
@@ -518,19 +518,42 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
             "supports single-table queries only.");
     }
 
-    std::vector<int> rows = filter_rows(ast, host_table_);
+    QueryPlan plan;
+    plan.ast = std::move(ast);
+
+    if (plan.ast.group_by) {
+        if (can_use_gpu_group_sum_fast_path(plan.ast)) {
+            plan.execution_kind = PlanExecutionKind::GroupByGpuSum;
+        } else {
+            plan.execution_kind = PlanExecutionKind::GroupByHost;
+        }
+        return plan;
+    }
+
+    if (dynamic_cast<VariableNode *>(plan.ast.select_list[0].get())) {
+        plan.execution_kind = PlanExecutionKind::SelectColumn;
+    } else {
+        plan.execution_kind = PlanExecutionKind::SelectExpression;
+    }
+    return plan;
+}
+
+QueryResult execute_plan(const QueryPlan &plan, const Table &table,
+                         const HostTable &host_table) {
+    std::vector<int> rows = filter_rows(plan.ast, host_table);
 
     ColumnData result = std::vector<float>{};
-    if (ast.group_by) {
-        if (can_use_gpu_group_sum_fast_path(ast)) {
-            result = execute_group_by_gpu_sum(ast, table_);
+    if (plan.ast.group_by) {
+        if (plan.execution_kind == PlanExecutionKind::GroupByGpuSum) {
+            result = execute_group_by_gpu_sum(plan.ast, table);
         } else {
-            result = execute_group_by(ast, host_table_, rows);
+            result = execute_group_by(plan.ast, host_table, rows);
         }
     } else {
-        if (auto *var =
-                dynamic_cast<VariableNode *>(ast.select_list[0].get())) {
-            const HostColumn *col = host_table_.get_column(var->name);
+        if (plan.execution_kind == PlanExecutionKind::SelectColumn) {
+            auto *var =
+                dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
+            const HostColumn *col = host_table.get_column(var->name);
             if (!col) {
                 throw std::runtime_error("Unknown column in SELECT: " + var->name);
             }
@@ -538,20 +561,38 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
         } else {
             auto &out = std::get<std::vector<float>>(result);
             for (int idx : rows) {
-                out.push_back(eval_node(ast.select_list[0].get(), host_table_, idx));
+                out.push_back(eval_node(plan.ast.select_list[0].get(), host_table, idx));
             }
         }
-        if (ast.order_by) {
-            apply_order_by(ast, host_table_, rows, result);
+        if (plan.ast.order_by) {
+            apply_order_by(plan.ast, host_table, rows, result);
         }
     }
 
-    if (ast.distinct) {
+    if (plan.ast.distinct) {
         apply_distinct(result);
     }
 
-    apply_limit_offset(ast, result);
+    apply_limit_offset(plan.ast, result);
     return QueryResult(std::move(result));
+}
+
+} // namespace
+
+QueryResult WarpDB::query_sql(const std::string &sql) {
+    auto tokens = tokenize(sql);
+    QueryAST ast;
+    try {
+        ast = parse_query(tokens);
+    } catch (const std::exception &e) {
+        throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
+    }
+
+    std::unordered_set<std::string> cols;
+    for (const auto &c : table_.columns) cols.insert(c.name);
+
+    QueryPlan plan = plan_query(std::move(ast), cols);
+    return execute_plan(plan, table_, host_table_);
 }
 
 
