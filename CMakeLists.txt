@@ -28,8 +28,6 @@ if(Arrow_FOUND)
     include_directories(${Arrow_INCLUDE_DIRS})
 endif()
 
-include_directories(include)
-
 set(WARPDB_SRC
     src/main.cu
     src/csv_loader.cpp
@@ -51,6 +49,7 @@ if(Arrow_FOUND)
 endif()
 
 add_executable(warpdb ${WARPDB_SRC})
+target_include_directories(warpdb PRIVATE include)
 
 set_target_properties(warpdb PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
@@ -247,6 +246,7 @@ add_library(warpdb_lib STATIC
     src/arrow_utils.cpp
     src/multi_gpu_utils.cpp
 )
+target_include_directories(warpdb_lib PUBLIC include)
 
 set_target_properties(warpdb_lib PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
