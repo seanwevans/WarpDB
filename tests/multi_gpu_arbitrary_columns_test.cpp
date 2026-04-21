@@ -2,6 +2,8 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 int main() {
     WarpDB db("data/arbitrary_columns.csv");
@@ -13,6 +15,14 @@ int main() {
 
     auto streamed = WarpDB::query_multi_gpu_csv("data/arbitrary_columns.csv", "alpha * beta", 2);
     assert(streamed.size() == direct.size());
+
+    bool threw_invalid_chunk = false;
+    try {
+        (void)WarpDB::query_multi_gpu_csv("data/arbitrary_columns.csv", "alpha * beta", 0);
+    } catch (const std::runtime_error &e) {
+        threw_invalid_chunk = std::string(e.what()) == "rows_per_chunk must be > 0";
+    }
+    assert(threw_invalid_chunk);
     for (size_t i = 0; i < streamed.size(); ++i) {
         assert(std::fabs(streamed[i] - direct[i]) < 1e-5f);
     }
