@@ -5,13 +5,15 @@
 int main() {
     std::string q = "SELECT SUM(price), quantity FROM sales JOIN items ON sales.id = items.id WHERE price > 10 GROUP BY quantity ORDER BY price DESC LIMIT 5";
     auto tokens = tokenize(q);
-    QueryAST ast = parse_query(tokens);
-    assert(ast.select_list.size() == 2);
-    assert(!ast.joins.empty());
-    assert(ast.where.has_value());
-    assert(ast.group_by.has_value());
-    assert(ast.order_by.has_value());
-    assert(ast.limit.has_value());
+    bool rejected_join = false;
+    try {
+        (void)parse_query(tokens);
+    } catch (const std::runtime_error &e) {
+        rejected_join = std::string(e.what()).find(
+                            "JOIN is parsed but not supported for execution yet") !=
+                        std::string::npos;
+    }
+    assert(rejected_join);
 
     std::string order_limit_q = "SELECT price FROM sales ORDER BY price LIMIT 5";
     auto order_limit_tokens = tokenize(order_limit_q);

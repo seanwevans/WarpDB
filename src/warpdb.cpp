@@ -517,6 +517,17 @@ void apply_distinct(ColumnData &result) {
         result);
 }
 
+void sort_rows_by_order(const QueryAST &ast, const HostTable &table,
+                        std::vector<int> &rows) {
+    if (!ast.order_by) return;
+    std::stable_sort(rows.begin(), rows.end(), [&](int l, int r) {
+        float lk = eval_node(ast.order_by->expr.get(), table, l);
+        float rk = eval_node(ast.order_by->expr.get(), table, r);
+        if (ast.order_by->ascending) return lk < rk;
+        return lk > rk;
+    });
+}
+
 struct JoinVariableRef {
     std::string relation;
     std::string column;
@@ -689,24 +700,13 @@ float eval_join_node(const ASTNode *node, const HostTable &table, int left_idx,
 QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols, const Table &table) {
     validate_query_ast(ast, cols);
 
-    if (ast.select_list.size() != 1) {
-        throw std::runtime_error(
-            "query_sql currently supports a single SELECT expression only");
-    }
     if (ast.group_by && ast.group_by->keys.size() != 1) {
         throw std::runtime_error(
             "GROUP BY in query_sql currently supports exactly one key expression");
     }
-    if (!ast.joins.empty()) {
-        if (ast.joins.size() != 1) {
-            throw std::runtime_error(
-                "JOIN execution currently supports exactly one JOIN clause");
-        }
-        if (ast.group_by || ast.having || ast.order_by) {
-            throw std::runtime_error(
-                "JOIN execution currently supports SELECT/WHERE/DISTINCT/LIMIT/OFFSET "
-                "without GROUP BY, HAVING, or ORDER BY");
-        }
+    if (ast.group_by && ast.select_list.size() != 1) {
+        throw std::runtime_error(
+            "GROUP BY queries currently support exactly one SELECT expression");
     }
 
     QueryPlan plan;
@@ -721,7 +721,8 @@ QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols
         return plan;
     }
 
-    if (dynamic_cast<VariableNode *>(plan.ast.select_list[0].get())) {
+    if (plan.ast.select_list.size() == 1 &&
+        dynamic_cast<VariableNode *>(plan.ast.select_list[0].get())) {
         plan.execution_kind = PlanExecutionKind::SelectColumn;
     } else {
         plan.execution_kind = PlanExecutionKind::SelectExpression;
@@ -732,18 +733,24 @@ QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols
 QueryResult execute_plan(const QueryPlan &plan, const Table &table,
                          const HostTable &host_table) {
     std::vector<int> rows = filter_rows(plan.ast, host_table);
-
-    ColumnData result = std::vector<float>{};
     if (plan.ast.group_by) {
+        ColumnData result = std::vector<float>{};
         if (plan.execution_kind == PlanExecutionKind::GroupByGpuSum) {
             result = execute_group_by_gpu_fast(plan.ast, table);
         } else {
             result = execute_group_by(plan.ast, host_table, rows);
         }
-    } else {
+        if (plan.ast.distinct) {
+            apply_distinct(result);
+        }
+        apply_limit_offset(plan.ast, result);
+        return QueryResult(std::move(result));
+    }
+
+    if (plan.ast.select_list.size() == 1) {
+        ColumnData result = std::vector<float>{};
         if (plan.execution_kind == PlanExecutionKind::SelectColumn) {
-            auto *var =
-                dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
+            auto *var = dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
             const HostColumn *col = host_table.get_column(var->name);
             if (!col) {
                 throw std::runtime_error("Unknown column in SELECT: " + var->name);
@@ -758,14 +765,48 @@ QueryResult execute_plan(const QueryPlan &plan, const Table &table,
         if (plan.ast.order_by) {
             apply_order_by(plan.ast, host_table, rows, result);
         }
+        if (plan.ast.distinct) {
+            apply_distinct(result);
+        }
+        apply_limit_offset(plan.ast, result);
+        return QueryResult(std::move(result));
     }
 
     if (plan.ast.distinct) {
-        apply_distinct(result);
+        throw std::runtime_error(
+            "DISTINCT with multiple SELECT expressions is not supported yet");
     }
 
-    apply_limit_offset(plan.ast, result);
-    return QueryResult(std::move(result));
+    sort_rows_by_order(plan.ast, host_table, rows);
+    const size_t off =
+        plan.ast.offset ? static_cast<size_t>(std::max(plan.ast.offset->count, 0)) : 0;
+    const size_t start = std::min(off, rows.size());
+    size_t end = rows.size();
+    if (plan.ast.limit) {
+        end = std::min(end, start + static_cast<size_t>(std::max(plan.ast.limit->count, 0)));
+    }
+
+    std::vector<int> projected_rows(rows.begin() + static_cast<std::ptrdiff_t>(start),
+                                    rows.begin() + static_cast<std::ptrdiff_t>(end));
+    std::vector<ColumnData> projected;
+    projected.reserve(plan.ast.select_list.size());
+    for (const auto &expr : plan.ast.select_list) {
+        if (auto *var = dynamic_cast<VariableNode *>(expr.get())) {
+            const HostColumn *col = host_table.get_column(var->name);
+            if (!col) {
+                throw std::runtime_error("Unknown column in SELECT: " + var->name);
+            }
+            projected.push_back(select_typed_column(*col, projected_rows));
+            continue;
+        }
+        std::vector<float> out;
+        out.reserve(projected_rows.size());
+        for (int idx : projected_rows) {
+            out.push_back(eval_node(expr.get(), host_table, idx));
+        }
+        projected.emplace_back(std::move(out));
+    }
+    return QueryResult(std::move(projected));
 }
 
 } // namespace
@@ -781,132 +822,6 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
 
     std::unordered_set<std::string> cols;
     for (const auto &c : table_.columns) cols.insert(c.name);
-
-    if (!ast.joins.empty()) {
-        validate_query_ast(ast, cols);
-        if (ast.select_list.size() != 1) {
-            throw std::runtime_error(
-                "query_sql currently supports a single SELECT expression only");
-        }
-        if (ast.joins.size() != 1) {
-            throw std::runtime_error(
-                "JOIN execution currently supports exactly one JOIN clause");
-        }
-        if (ast.group_by || ast.having || ast.order_by) {
-            throw std::runtime_error(
-                "JOIN execution currently supports SELECT/WHERE/DISTINCT/LIMIT/OFFSET "
-                "without GROUP BY, HAVING, or ORDER BY");
-        }
-
-        auto [left_rows, right_rows] = build_inner_join_rows(ast, host_table_);
-        ColumnData result = std::vector<float>{};
-
-        if (auto *var = dynamic_cast<VariableNode *>(ast.select_list[0].get())) {
-            auto qualified = parse_join_variable_name(var->name);
-            if (!qualified) {
-                throw std::runtime_error(
-                    "JOIN SELECT column must be qualified (e.g. a.col or b.col)");
-            }
-            const HostColumn *col = resolve_join_column(host_table_, qualified->relation,
-                                                        ast.from_table, ast.joins[0].table,
-                                                        qualified->column);
-            switch (col->type) {
-            case DataType::Int32: {
-                const auto &src = std::get<std::vector<int32_t>>(col->data);
-                std::vector<int32_t> out;
-                out.reserve(left_rows.size());
-                for (size_t i = 0; i < left_rows.size(); ++i) {
-                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
-                                                    left_rows[i], right_rows[i],
-                                                    ast.from_table, ast.joins[0].table) == 0.0f)
-                        continue;
-                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
-                    out.push_back(src[idx]);
-                }
-                result = std::move(out);
-                break;
-            }
-            case DataType::Int64: {
-                const auto &src = std::get<std::vector<int64_t>>(col->data);
-                std::vector<int64_t> out;
-                out.reserve(left_rows.size());
-                for (size_t i = 0; i < left_rows.size(); ++i) {
-                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
-                                                    left_rows[i], right_rows[i],
-                                                    ast.from_table, ast.joins[0].table) == 0.0f)
-                        continue;
-                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
-                    out.push_back(src[idx]);
-                }
-                result = std::move(out);
-                break;
-            }
-            case DataType::Float32: {
-                const auto &src = std::get<std::vector<float>>(col->data);
-                std::vector<float> out;
-                out.reserve(left_rows.size());
-                for (size_t i = 0; i < left_rows.size(); ++i) {
-                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
-                                                    left_rows[i], right_rows[i],
-                                                    ast.from_table, ast.joins[0].table) == 0.0f)
-                        continue;
-                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
-                    out.push_back(src[idx]);
-                }
-                result = std::move(out);
-                break;
-            }
-            case DataType::Float64: {
-                const auto &src = std::get<std::vector<double>>(col->data);
-                std::vector<double> out;
-                out.reserve(left_rows.size());
-                for (size_t i = 0; i < left_rows.size(); ++i) {
-                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
-                                                    left_rows[i], right_rows[i],
-                                                    ast.from_table, ast.joins[0].table) == 0.0f)
-                        continue;
-                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
-                    out.push_back(src[idx]);
-                }
-                result = std::move(out);
-                break;
-            }
-            case DataType::String: {
-                const auto &src = std::get<std::vector<std::string>>(col->data);
-                std::vector<std::string> out;
-                out.reserve(left_rows.size());
-                for (size_t i = 0; i < left_rows.size(); ++i) {
-                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
-                                                    left_rows[i], right_rows[i],
-                                                    ast.from_table, ast.joins[0].table) == 0.0f)
-                        continue;
-                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
-                    out.push_back(src[idx]);
-                }
-                result = std::move(out);
-                break;
-            }
-            }
-        } else {
-            auto &out = std::get<std::vector<float>>(result);
-            out.reserve(left_rows.size());
-            for (size_t i = 0; i < left_rows.size(); ++i) {
-                if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
-                                                left_rows[i], right_rows[i], ast.from_table,
-                                                ast.joins[0].table) == 0.0f)
-                    continue;
-                out.push_back(eval_join_node(ast.select_list[0].get(), host_table_,
-                                             left_rows[i], right_rows[i], ast.from_table,
-                                             ast.joins[0].table));
-            }
-        }
-
-        if (ast.distinct) {
-            apply_distinct(result);
-        }
-        apply_limit_offset(ast, result);
-        return QueryResult(std::move(result));
-    }
 
     QueryPlan plan = plan_query(std::move(ast), cols, table_);
     return execute_plan(plan, table_, host_table_);

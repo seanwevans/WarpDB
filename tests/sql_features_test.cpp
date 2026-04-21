@@ -12,16 +12,14 @@ int main(){
     auto single_expr = db.query_sql("SELECT price FROM test");
     assert(single_expr.size() == 4);
 
-    bool multiple_expr_threw = false;
-    try {
-        (void)db.query_sql("SELECT price, quantity FROM test");
-    } catch (const std::runtime_error &e) {
-        multiple_expr_threw =
-            std::string(e.what()).find(
-                "query_sql currently supports a single SELECT expression only") !=
-            std::string::npos;
-    }
-    assert(multiple_expr_threw);
+    auto multiple_expr = db.query_sql("SELECT price, quantity FROM test");
+    assert(multiple_expr.column_count() == 2);
+    const auto &prices_sel = multiple_expr.column_as<float>(0);
+    const auto &qty_sel = multiple_expr.column_as<int32_t>(1);
+    assert(prices_sel.size() == 4);
+    assert(qty_sel.size() == 4);
+    assert(std::abs(prices_sel[0] - 10.5f) < 1e-5);
+    assert(qty_sel[0] == 3);
 
     bool grouped_multiple_expr_threw = false;
     try {
@@ -30,7 +28,7 @@ int main(){
     } catch (const std::runtime_error &e) {
         grouped_multiple_expr_threw =
             std::string(e.what()).find(
-                "query_sql currently supports a single SELECT expression only") !=
+                "GROUP BY queries currently support exactly one SELECT expression") !=
             std::string::npos;
     }
     assert(grouped_multiple_expr_threw);
