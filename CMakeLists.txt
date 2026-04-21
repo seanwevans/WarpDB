@@ -261,7 +261,6 @@ target_link_libraries(warpdb_lib PUBLIC CUDA::nvrtc CUDA::cuda_driver)
 if(Arrow_FOUND)
     target_sources(warpdb_lib PRIVATE src/arrow_loader.cpp)
 endif()
-set_target_properties(warpdb_lib PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(warpdb_lib PUBLIC CUDA::cudart CUDA::nvrtc CUDA::cuda_driver nlohmann_json::nlohmann_json)
 
 if(Arrow_FOUND)
