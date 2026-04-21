@@ -634,7 +634,7 @@ QueryResult WarpDB::query_multi_gpu_csv(const std::string &csv_path,
 
     bool finished = false;
     std::vector<DataType> schema;
-    std::vector<float> all_results;
+    ColumnData all_results = std::vector<float>{};
     while (!finished) {
         HostTable chunk =
             load_csv_chunk(file, rows_per_chunk, finished, column_names,
@@ -643,7 +643,9 @@ QueryResult WarpDB::query_multi_gpu_csv(const std::string &csv_path,
             break;
         }
         auto part = run_multi_gpu_jit_host(chunk, expr_cuda, condition_cuda);
-        all_results.insert(all_results.end(), part.begin(), part.end());
+        auto &dst = std::get<std::vector<float>>(all_results);
+        const auto &src = std::get<std::vector<float>>(part);
+        dst.insert(dst.end(), src.begin(), src.end());
     }
 
     return QueryResult(std::move(all_results));
