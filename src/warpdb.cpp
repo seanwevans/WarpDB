@@ -207,6 +207,8 @@ float eval_having_node(const ASTNode *node, const AggData &gd) {
         if (op == "-") return l - r;
         if (op == "*") return l * r;
         if (op == "/") return l / r;
+        if (op == "&&") return (l != 0.0f) && (r != 0.0f);
+        if (op == "||") return (l != 0.0f) || (r != 0.0f);
         if (op == ">") return l > r;
         if (op == "<") return l < r;
         if (op == ">=") return l >= r;

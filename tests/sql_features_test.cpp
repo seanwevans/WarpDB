@@ -5,6 +5,7 @@
 #include <map>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 int main(){
     WarpDB db("data/test.csv");
@@ -96,6 +97,33 @@ int main(){
     for (size_t i = 0; i < expected_desc.size(); ++i) {
         assert(std::abs(float_group_desc[i] - expected_desc[i]) < 1e-5);
     }
+
+    const std::string composite_csv = "data/test_having_composite.csv";
+    {
+        std::ofstream out(composite_csv);
+        out << "price,quantity\n";
+        out << "6,1\n";
+        out << "7,1\n";
+        out << "50,2\n";
+    }
+
+    WarpDB having_db(composite_csv);
+
+    auto having_and = having_db.query_sql(
+        "SELECT SUM(price) FROM test_having_composite "
+        "GROUP BY quantity "
+        "HAVING SUM(price) > 10 AND COUNT(price) >= 2 "
+        "ORDER BY quantity ASC");
+    assert(having_and.size() == 1);
+    assert(std::abs(having_and[0] - 13.0f) < 1e-5);
+
+    auto having_or = having_db.query_sql(
+        "SELECT SUM(price) FROM test_having_composite "
+        "GROUP BY quantity "
+        "HAVING SUM(price) > 100 OR COUNT(price) = 1 "
+        "ORDER BY quantity ASC");
+    assert(having_or.size() == 1);
+    assert(std::abs(having_or[0] - 50.0f) < 1e-5);
 
     return 0;
 }
