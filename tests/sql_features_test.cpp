@@ -17,10 +17,22 @@ int main(){
     } catch (const std::runtime_error &e) {
         multiple_expr_threw =
             std::string(e.what()).find(
-                "Multiple SELECT expressions are not yet supported in query_sql") !=
+                "query_sql currently supports a single SELECT expression only") !=
             std::string::npos;
     }
     assert(multiple_expr_threw);
+
+    bool grouped_multiple_expr_threw = false;
+    try {
+        (void)db.query_sql(
+            "SELECT SUM(price), quantity FROM test GROUP BY quantity");
+    } catch (const std::runtime_error &e) {
+        grouped_multiple_expr_threw =
+            std::string(e.what()).find(
+                "query_sql currently supports a single SELECT expression only") !=
+            std::string::npos;
+    }
+    assert(grouped_multiple_expr_threw);
 
     auto res = db.query_sql("SELECT SUM(price) FROM test GROUP BY quantity ORDER BY quantity ASC");
 
