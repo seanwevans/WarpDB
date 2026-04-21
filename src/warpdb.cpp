@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <variant>
 
 #include <map>
 #include <unordered_map>
@@ -24,7 +25,12 @@ void validate_ast(const ASTNode *node,
                   const std::unordered_set<std::string> &cols) {
     if (!node) return;
     if (auto var = dynamic_cast<const VariableNode *>(node)) {
-        if (cols.find(var->name) == cols.end()) {
+        std::string lookup = var->name;
+        const auto dot = lookup.find('.');
+        if (dot != std::string::npos && dot + 1 < lookup.size()) {
+            lookup = lookup.substr(dot + 1);
+        }
+        if (cols.find(lookup) == cols.end()) {
             throw std::runtime_error("Unknown column: " + var->name);
         }
     } else if (auto bin = dynamic_cast<const BinaryOpNode *>(node)) {
@@ -488,6 +494,173 @@ void apply_distinct(ColumnData &result) {
         result);
 }
 
+struct JoinVariableRef {
+    std::string relation;
+    std::string column;
+};
+
+std::optional<JoinVariableRef> parse_join_variable_name(const std::string &name) {
+    const auto dot = name.find('.');
+    if (dot == std::string::npos || dot == 0 || dot + 1 >= name.size()) {
+        return std::nullopt;
+    }
+    return JoinVariableRef{name.substr(0, dot), name.substr(dot + 1)};
+}
+
+using JoinKey = std::variant<int32_t, int64_t, float, double, std::string>;
+
+struct JoinKeyHash {
+    size_t operator()(const JoinKey &k) const {
+        return std::visit(
+            [](const auto &v) -> size_t {
+                using T = std::decay_t<decltype(v)>;
+                return std::hash<T>{}(v);
+            },
+            k);
+    }
+};
+
+bool make_join_key(const HostColumn &col, int idx, JoinKey &out_key) {
+    switch (col.type) {
+    case DataType::Int32:
+        out_key = std::get<std::vector<int32_t>>(col.data)[idx];
+        return true;
+    case DataType::Int64:
+        out_key = std::get<std::vector<int64_t>>(col.data)[idx];
+        return true;
+    case DataType::Float32:
+        out_key = std::get<std::vector<float>>(col.data)[idx];
+        return true;
+    case DataType::Float64:
+        out_key = std::get<std::vector<double>>(col.data)[idx];
+        return true;
+    case DataType::String:
+        out_key = std::get<std::vector<std::string>>(col.data)[idx];
+        return true;
+    }
+    return false;
+}
+
+const HostColumn *resolve_join_column(const HostTable &table, const std::string &relation,
+                                      const std::string &from_table,
+                                      const std::string &join_table,
+                                      const std::string &column_name) {
+    if (relation != from_table && relation != join_table) {
+        throw std::runtime_error("Unknown relation in JOIN expression: " + relation);
+    }
+    const HostColumn *col = table.get_column(column_name);
+    if (!col) {
+        throw std::runtime_error("Unknown column in JOIN expression: " + column_name);
+    }
+    return col;
+}
+
+std::pair<std::vector<int>, std::vector<int>>
+build_inner_join_rows(const QueryAST &ast, const HostTable &table) {
+    if (ast.joins.size() != 1) {
+        throw std::runtime_error(
+            "JOIN execution currently supports exactly one JOIN clause");
+    }
+
+    const JoinClause &join = ast.joins[0];
+    auto *cmp = dynamic_cast<const BinaryOpNode *>(join.condition.get());
+    if (!cmp || (cmp->op != "=" && cmp->op != "==")) {
+        throw std::runtime_error(
+            "JOIN execution currently supports equi-join predicates only");
+    }
+
+    auto *left_var = dynamic_cast<const VariableNode *>(cmp->left.get());
+    auto *right_var = dynamic_cast<const VariableNode *>(cmp->right.get());
+    if (!left_var || !right_var) {
+        throw std::runtime_error(
+            "JOIN ON clause must compare two columns (e.g. a.id = b.id)");
+    }
+
+    auto left_ref = parse_join_variable_name(left_var->name);
+    auto right_ref = parse_join_variable_name(right_var->name);
+    if (!left_ref || !right_ref) {
+        throw std::runtime_error(
+            "JOIN ON clause must use qualified columns (e.g. a.id = b.id)");
+    }
+
+    const HostColumn *left_col =
+        resolve_join_column(table, left_ref->relation, ast.from_table, join.table,
+                            left_ref->column);
+    const HostColumn *right_col =
+        resolve_join_column(table, right_ref->relation, ast.from_table, join.table,
+                            right_ref->column);
+
+    if (left_col->type != right_col->type) {
+        throw std::runtime_error("JOIN key type mismatch between " + left_var->name +
+                                 " and " + right_var->name);
+    }
+
+    std::unordered_map<JoinKey, std::vector<int>, JoinKeyHash> right_index;
+    right_index.reserve(static_cast<size_t>(table.num_rows()));
+    for (int r = 0; r < table.num_rows(); ++r) {
+        JoinKey key;
+        if (!make_join_key(*right_col, r, key)) continue;
+        right_index[key].push_back(r);
+    }
+
+    std::vector<int> left_rows;
+    std::vector<int> right_rows;
+    for (int l = 0; l < table.num_rows(); ++l) {
+        JoinKey key;
+        if (!make_join_key(*left_col, l, key)) continue;
+        auto it = right_index.find(key);
+        if (it == right_index.end()) continue;
+        for (int r : it->second) {
+            left_rows.push_back(l);
+            right_rows.push_back(r);
+        }
+    }
+    return {std::move(left_rows), std::move(right_rows)};
+}
+
+float eval_join_node(const ASTNode *node, const HostTable &table, int left_idx,
+                     int right_idx, const std::string &from_table,
+                     const std::string &join_table) {
+    if (auto c = dynamic_cast<const ConstantNode *>(node)) {
+        return std::stof(c->value);
+    }
+    if (auto v = dynamic_cast<const VariableNode *>(node)) {
+        auto qualified = parse_join_variable_name(v->name);
+        if (qualified) {
+            const HostColumn *col = resolve_join_column(
+                table, qualified->relation, from_table, join_table, qualified->column);
+            int idx = qualified->relation == from_table ? left_idx : right_idx;
+            return get_value(table, col->name, idx);
+        }
+        const HostColumn *col = table.get_column(v->name);
+        if (!col) {
+            throw std::runtime_error("Unknown column: " + v->name);
+        }
+        return get_value(table, col->name, left_idx);
+    }
+    if (auto b = dynamic_cast<const BinaryOpNode *>(node)) {
+        float l = eval_join_node(b->left.get(), table, left_idx, right_idx, from_table,
+                                 join_table);
+        float r = eval_join_node(b->right.get(), table, left_idx, right_idx, from_table,
+                                 join_table);
+        const std::string &op = b->op;
+        if (op == "+") return l + r;
+        if (op == "-") return l - r;
+        if (op == "*") return l * r;
+        if (op == "/") return l / r;
+        if (op == "&&") return (l != 0.0f) && (r != 0.0f);
+        if (op == "||") return (l != 0.0f) || (r != 0.0f);
+        if (op == ">") return l > r;
+        if (op == "<") return l < r;
+        if (op == ">=") return l >= r;
+        if (op == "<=") return l <= r;
+        if (op == "==") return l == r;
+        if (op == "=") return l == r;
+        if (op == "!=") return l != r;
+    }
+    return 0.0f;
+}
+
 } // namespace
 
 QueryResult WarpDB::query_sql(const std::string &sql) {
@@ -513,9 +686,120 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
     }
 
     if (!ast.joins.empty()) {
-        throw std::runtime_error(
-            "JOIN is parsed but not executed yet. SQL execution currently "
-            "supports single-table queries only.");
+        if (ast.group_by || ast.having || ast.order_by) {
+            throw std::runtime_error(
+                "JOIN execution currently supports SELECT/WHERE/DISTINCT/LIMIT/OFFSET "
+                "without GROUP BY, HAVING, or ORDER BY");
+        }
+
+        auto [left_rows, right_rows] = build_inner_join_rows(ast, host_table_);
+        ColumnData result = std::vector<float>{};
+
+        if (auto *var = dynamic_cast<VariableNode *>(ast.select_list[0].get())) {
+            auto qualified = parse_join_variable_name(var->name);
+            if (!qualified) {
+                throw std::runtime_error(
+                    "JOIN SELECT column must be qualified (e.g. a.col or b.col)");
+            }
+            const HostColumn *col = resolve_join_column(host_table_, qualified->relation,
+                                                        ast.from_table, ast.joins[0].table,
+                                                        qualified->column);
+            switch (col->type) {
+            case DataType::Int32: {
+                const auto &src = std::get<std::vector<int32_t>>(col->data);
+                std::vector<int32_t> out;
+                out.reserve(left_rows.size());
+                for (size_t i = 0; i < left_rows.size(); ++i) {
+                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
+                                                    left_rows[i], right_rows[i],
+                                                    ast.from_table, ast.joins[0].table) == 0.0f)
+                        continue;
+                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
+                    out.push_back(src[idx]);
+                }
+                result = std::move(out);
+                break;
+            }
+            case DataType::Int64: {
+                const auto &src = std::get<std::vector<int64_t>>(col->data);
+                std::vector<int64_t> out;
+                out.reserve(left_rows.size());
+                for (size_t i = 0; i < left_rows.size(); ++i) {
+                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
+                                                    left_rows[i], right_rows[i],
+                                                    ast.from_table, ast.joins[0].table) == 0.0f)
+                        continue;
+                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
+                    out.push_back(src[idx]);
+                }
+                result = std::move(out);
+                break;
+            }
+            case DataType::Float32: {
+                const auto &src = std::get<std::vector<float>>(col->data);
+                std::vector<float> out;
+                out.reserve(left_rows.size());
+                for (size_t i = 0; i < left_rows.size(); ++i) {
+                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
+                                                    left_rows[i], right_rows[i],
+                                                    ast.from_table, ast.joins[0].table) == 0.0f)
+                        continue;
+                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
+                    out.push_back(src[idx]);
+                }
+                result = std::move(out);
+                break;
+            }
+            case DataType::Float64: {
+                const auto &src = std::get<std::vector<double>>(col->data);
+                std::vector<double> out;
+                out.reserve(left_rows.size());
+                for (size_t i = 0; i < left_rows.size(); ++i) {
+                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
+                                                    left_rows[i], right_rows[i],
+                                                    ast.from_table, ast.joins[0].table) == 0.0f)
+                        continue;
+                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
+                    out.push_back(src[idx]);
+                }
+                result = std::move(out);
+                break;
+            }
+            case DataType::String: {
+                const auto &src = std::get<std::vector<std::string>>(col->data);
+                std::vector<std::string> out;
+                out.reserve(left_rows.size());
+                for (size_t i = 0; i < left_rows.size(); ++i) {
+                    if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
+                                                    left_rows[i], right_rows[i],
+                                                    ast.from_table, ast.joins[0].table) == 0.0f)
+                        continue;
+                    int idx = qualified->relation == ast.from_table ? left_rows[i] : right_rows[i];
+                    out.push_back(src[idx]);
+                }
+                result = std::move(out);
+                break;
+            }
+            }
+        } else {
+            auto &out = std::get<std::vector<float>>(result);
+            out.reserve(left_rows.size());
+            for (size_t i = 0; i < left_rows.size(); ++i) {
+                if (ast.where && eval_join_node(ast.where.value().get(), host_table_,
+                                                left_rows[i], right_rows[i], ast.from_table,
+                                                ast.joins[0].table) == 0.0f)
+                    continue;
+                out.push_back(eval_join_node(ast.select_list[0].get(), host_table_,
+                                             left_rows[i], right_rows[i], ast.from_table,
+                                             ast.joins[0].table));
+            }
+        }
+
+        if (ast.distinct) {
+            apply_distinct(result);
+        }
+        apply_limit_offset(ast, result);
+        return QueryResult(std::move(result));
     }
 
     std::vector<int> rows = filter_rows(ast, host_table_);

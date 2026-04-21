@@ -61,9 +61,9 @@ public:
     QueryResult query(const std::string &expr);
 
     // Execute a full SQL query supporting WHERE/GROUP BY/HAVING/ORDER BY,
-    // DISTINCT/LIMIT/OFFSET on a single loaded table.
-    // JOIN clauses are parsed by the SQL frontend but are not executed yet.
-    std::vector<float> query_sql(const std::string &sql);
+    // DISTINCT/LIMIT/OFFSET. INNER JOIN execution is currently limited to
+    // single-join, non-aggregation queries.
+    QueryResult query_sql(const std::string &sql);
 
     // Execute a query using all available GPUs on the data loaded in this
     // WarpDB instance. Falls back to single-GPU execution when only one device
