@@ -70,11 +70,12 @@ int main() {
     host.columns.push_back(std::move(str_col));
 
     auto results = run_multi_gpu_jit_host(host, "f32_col + 1.0f", "");
-    assert(static_cast<int>(results.size()) == rows);
+    const auto &out = std::get<std::vector<float>>(results);
+    assert(static_cast<int>(out.size()) == rows);
 
     for (int i = 0; i < rows; ++i) {
         float expected = f32_vec[i] + 1.0f;
-        assert(std::fabs(results[i] - expected) < 1e-6f);
+        assert(std::fabs(out[i] - expected) < 1e-6f);
     }
 
     if (device_count < 2) {

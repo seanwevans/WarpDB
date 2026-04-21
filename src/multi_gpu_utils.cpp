@@ -5,9 +5,9 @@
 // All CUDA runtime calls are wrapped in CUDA_CHECK, which throws
 // std::runtime_error on failure. This allows errors to propagate to callers
 // for handling while keeping this function's control flow simple.
-std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
-                                          const std::string &expr_cuda,
-                                          const std::string &cond_cuda) {
+ColumnData run_multi_gpu_jit_host(const HostTable &host,
+                                  const std::string &expr_cuda,
+                                  const std::string &cond_cuda) {
     int original_device = 0;
     CUDA_CHECK(cudaGetDevice(&original_device));
     struct DeviceReset {
@@ -26,7 +26,7 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
         CUDA_CHECK(cudaMemcpy(result.data(), d_out.get(),
                               sizeof(float) * host.num_rows(),
                               cudaMemcpyDeviceToHost));
-        return result;
+        return ColumnData(std::move(result));
     }
 
     int N = host.num_rows();
@@ -79,5 +79,5 @@ std::vector<float> run_multi_gpu_jit_host(const HostTable &host,
                               cudaMemcpyDeviceToHost));
     }
 
-    return results;
+    return ColumnData(std::move(results));
 }

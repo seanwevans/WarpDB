@@ -61,8 +61,8 @@ public:
     QueryResult query(const std::string &expr);
 
     // Execute a full SQL query supporting WHERE/GROUP BY/HAVING/ORDER BY,
-    // DISTINCT/LIMIT/OFFSET. INNER JOIN execution is currently limited to
-    // single-join, non-aggregation queries.
+    // DISTINCT/LIMIT/OFFSET on a single loaded table.
+    // JOIN clauses are parsed by the SQL frontend but are not executed yet.
     QueryResult query_sql(const std::string &sql);
 
     // Execute a query using all available GPUs on the data loaded in this

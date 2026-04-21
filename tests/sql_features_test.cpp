@@ -164,5 +164,40 @@ int main(){
     }
     assert(multi_key_group_by_threw);
 
+    const std::string generic_gpu_csv = "data/test_group_fastpath_generic.csv";
+    {
+        std::ofstream out(generic_gpu_csv);
+        out << "gid,score\n";
+        out << "10,3\n";
+        out << "10,5\n";
+        out << "20,7\n";
+        out << "20,9\n";
+    }
+
+    WarpDB generic_gpu_db(generic_gpu_csv);
+    auto sum_generic = generic_gpu_db.query_sql(
+        "SELECT SUM(score) FROM test_group_fastpath_generic GROUP BY gid ORDER BY gid ASC");
+    assert(sum_generic.size() == 2);
+    assert(std::abs(sum_generic[0] - 8.0f) < 1e-5);
+    assert(std::abs(sum_generic[1] - 16.0f) < 1e-5);
+
+    auto avg_generic = generic_gpu_db.query_sql(
+        "SELECT AVG(score) FROM test_group_fastpath_generic GROUP BY gid ORDER BY gid ASC");
+    assert(avg_generic.size() == 2);
+    assert(std::abs(avg_generic[0] - 4.0f) < 1e-5);
+    assert(std::abs(avg_generic[1] - 8.0f) < 1e-5);
+
+    auto min_generic = generic_gpu_db.query_sql(
+        "SELECT MIN(score) FROM test_group_fastpath_generic GROUP BY gid ORDER BY gid ASC");
+    assert(min_generic.size() == 2);
+    assert(std::abs(min_generic[0] - 3.0f) < 1e-5);
+    assert(std::abs(min_generic[1] - 7.0f) < 1e-5);
+
+    auto max_generic = generic_gpu_db.query_sql(
+        "SELECT MAX(score) FROM test_group_fastpath_generic GROUP BY gid ORDER BY gid ASC");
+    assert(max_generic.size() == 2);
+    assert(std::abs(max_generic[0] - 5.0f) < 1e-5);
+    assert(std::abs(max_generic[1] - 9.0f) < 1e-5);
+
     return 0;
 }
