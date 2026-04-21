@@ -947,6 +947,10 @@ QueryResult WarpDB::query_multi_gpu(const std::string &expr) {
 QueryResult WarpDB::query_multi_gpu_csv(const std::string &csv_path,
                                         const std::string &expr,
                                         int rows_per_chunk) {
+    if (rows_per_chunk <= 0) {
+        throw std::runtime_error("rows_per_chunk must be > 0");
+    }
+
     auto tokens = tokenize(expr);
     auto split = split_where_clause_tokens(tokens);
     auto expr_ast = parse_expression(split.expression_tokens);
