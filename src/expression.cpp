@@ -576,8 +576,15 @@ QueryAST Parser::parse_query() {
   if (current < toks.size() && toks[current].type == TokenType::Keyword &&
       toks[current].value == "OFFSET") {
     current++;
-    if (current >= toks.size() || toks[current].type != TokenType::Number)
-      throw std::runtime_error("Expected numeric value after OFFSET");
+
+    if (current >= toks.size() || toks[current].type != TokenType::Number) {
+      int l = current < toks.size() ? toks[current].line : toks.back().line;
+      int c = current < toks.size() ? toks[current].column : toks.back().column;
+      throw std::runtime_error("Expected numeric value after OFFSET at line " +
+                               std::to_string(l) + " column " +
+                               std::to_string(c));
+    }
+
     OffsetClause oc{std::stoi(toks[current].value)};
     current++;
     query.offset = oc;

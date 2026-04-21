@@ -58,6 +58,23 @@ void test_malformed_exponent_missing_digits() {
     assert(threw && "Expected malformed exponent error");
 }
 
+
+void test_malformed_offset_reports_location() {
+    bool threw = false;
+    try {
+        auto tokens = tokenize("SELECT price FROM t OFFSET foo");
+        QueryAST q = parse_query(tokens);
+        (void)q;
+    } catch (const std::runtime_error &e) {
+        threw = true;
+        std::string msg = e.what();
+        assert(msg.find("Expected numeric value after OFFSET") != std::string::npos);
+        assert(msg.find("line") != std::string::npos);
+        assert(msg.find("column") != std::string::npos);
+    }
+    assert(threw && "Expected malformed OFFSET to fail");
+}
+
 void test_malformed_exponent_missing_digits_after_sign() {
     bool threw = false;
     try {
@@ -78,6 +95,7 @@ int main() {
     test_unbalanced_parentheses();
     test_malformed_exponent_missing_digits();
     test_malformed_exponent_missing_digits_after_sign();
+    test_malformed_offset_reports_location();
     std::cout << "All regression tests passed\n";
     return 0;
 }
