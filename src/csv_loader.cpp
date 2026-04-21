@@ -424,30 +424,6 @@ Table upload_to_gpu(const HostTable &host) {
 Table load_csv_to_gpu(const std::string &filepath,
                       const std::vector<DataType> &schema,
                       ParsePolicy policy) {
-#ifdef USE_ARROW
-  if (schema.empty()) {
-    ArrowTable atable = load_csv_arrow(filepath);
-    Table table;
-    table.num_rows = static_cast<int>(atable.num_rows);
-    {
-      ColumnDesc col;
-      col.name = "price";
-      col.type = DataType::Float32;
-      col.device_ptr.reset((void *)atable.d_price->address());
-      col.length = table.num_rows;
-      table.columns.push_back(std::move(col));
-    }
-    {
-      ColumnDesc col;
-      col.name = "quantity";
-      col.type = DataType::Int32;
-      col.device_ptr.reset((void *)atable.d_quantity->address());
-      col.length = table.num_rows;
-      table.columns.push_back(std::move(col));
-    }
-    return table;
-  }
-#endif
   HostTable host = load_csv_to_host(filepath, schema, policy);
   return upload_to_gpu(host);
 }
