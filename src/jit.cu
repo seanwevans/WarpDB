@@ -292,6 +292,25 @@ void jit_compile_and_launch(const std::string &expr_code,
 
   int N = table.num_rows;
 
+  // String columns are uploaded as offsets + character buffers and cannot be
+  // used directly in generated arithmetic/boolean expressions. Detect string
+  // references early and fail with a clear error instead of allowing NVRTC
+  // compilation to fail with opaque diagnostics.
+  auto references_column = [](const std::string &code,
+                              const std::string &column_name) {
+    if (code.empty()) return false;
+    const std::string token = column_name + "[idx]";
+    return code.find(token) != std::string::npos;
+  };
+  for (const auto &c : table.columns) {
+    if (c.type != DataType::String) continue;
+    if (references_column(expr_code, c.name) ||
+        references_column(condition_code, c.name)) {
+      throw std::runtime_error(
+          "String columns are not supported in GPU JIT expressions: " + c.name);
+    }
+  }
+
   std::string body;
   if (!condition_code.empty()) {
     body = "if (" + condition_code + ") {\n    output[idx] = " + expr_code +
