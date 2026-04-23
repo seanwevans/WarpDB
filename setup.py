@@ -1,4 +1,5 @@
 from glob import glob
+import os
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -40,7 +41,43 @@ class WarpDBBuildExt(build_ext):
         for ext in self.extensions:
             if include_dir not in ext.include_dirs:
                 ext.include_dirs.append(include_dir)
+
+        self._configure_cuda_compiler()
         super().build_extensions()
+
+    def _configure_cuda_compiler(self):
+        if not hasattr(self.compiler, 'compiler_so'):
+            return
+
+        if '.cu' not in self.compiler.src_extensions:
+            self.compiler.src_extensions.append('.cu')
+
+        default_compiler_so = self.compiler.compiler_so
+        super_compile = self.compiler._compile
+
+        def _compile(obj, src, ext, cc_args, extra_postargs, pp_opts):
+            is_cuda = os.path.splitext(src)[1] == '.cu'
+
+            if isinstance(extra_postargs, dict):
+                cxx_postargs = extra_postargs.get('cxx', [])
+                nvcc_postargs = extra_postargs.get('nvcc', [])
+            else:
+                cxx_postargs = extra_postargs
+                nvcc_postargs = extra_postargs
+
+            try:
+                if is_cuda:
+                    self.compiler.set_executable('compiler_so', os.environ.get('NVCC', 'nvcc'))
+                    postargs = ['-std=c++17', *nvcc_postargs]
+                else:
+                    postargs = cxx_postargs
+
+                super_compile(obj, src, ext, cc_args, postargs, pp_opts)
+            finally:
+                self.compiler.compiler_so = default_compiler_so
+
+        self.compiler._compile = _compile
+
 
 include_files = glob('include/*.hpp') + glob('include/*.h')
 data_files = ['data/test.csv', 'data/test.json', 'data/malformed.json']
@@ -54,12 +91,16 @@ ext_modules = [
             'src/csv_loader.cpp',
             'src/json_loader.cpp',
             'src/expression.cpp',
-            'src/jit.cpp',
+            'src/jit.cu',
             'src/multi_gpu_utils.cpp',
             'src/optimizer.cpp',
             'src/arrow_utils.cpp',
         ],
         include_dirs=['include'],
+        extra_compile_args={
+            'cxx': ['-O3'],
+            'nvcc': ['-O3', '--compiler-options', '-fPIC'],
+        },
         extra_link_args=['-lcudart', '-lnvrtc', '-lcuda'],
         cxx_std=17,
     )
