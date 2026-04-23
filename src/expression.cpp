@@ -438,14 +438,41 @@ QueryAST Parser::parse_query() {
 
   query.from_table = toks[current++].value;
 
-  if (current < toks.size() && toks[current].type == TokenType::Keyword &&
-      toks[current].value == "JOIN") {
-    int l = toks[current].line;
-    int c = toks[current].column;
-    throw std::runtime_error(
-        "JOIN is parsed but not supported for execution yet; rejecting during AST generation "
-        "until GPU hash-join or nested-loop join is implemented (line " +
-        std::to_string(l) + ", column " + std::to_string(c) + ")");
+  while (current < end && toks[current].type == TokenType::Keyword &&
+         toks[current].value == "JOIN") {
+    current++;
+    if (current >= end || toks[current].type != TokenType::Identifier) {
+      int l = current < toks.size() ? toks[current].line : toks.back().line;
+      int c = current < toks.size() ? toks[current].column : toks.back().column;
+      throw std::runtime_error("Expected table name after JOIN at line " +
+                               std::to_string(l) + " column " +
+                               std::to_string(c));
+    }
+
+    JoinClause join_clause;
+    join_clause.table = toks[current++].value;
+    expect_kw("ON");
+
+    size_t start = current;
+    while (current < end &&
+           !(toks[current].type == TokenType::Keyword &&
+             (toks[current].value == "JOIN" || toks[current].value == "WHERE" ||
+              toks[current].value == "GROUP" || toks[current].value == "ORDER" ||
+              toks[current].value == "HAVING" || toks[current].value == "LIMIT" ||
+              toks[current].value == "OFFSET"))) {
+      current++;
+    }
+    if (start == static_cast<size_t>(current)) {
+      int l = current < toks.size() ? toks[current].line : toks.back().line;
+      int c = current < toks.size() ? toks[current].column : toks.back().column;
+      throw std::runtime_error("Expected JOIN condition after ON at line " +
+                               std::to_string(l) + " column " +
+                               std::to_string(c));
+    }
+    std::vector<Token> join_tokens(toks.begin() + start, toks.begin() + current);
+    join_tokens.push_back({TokenType::End, "", 0, 0});
+    join_clause.condition = ::parse_expression(join_tokens);
+    query.joins.push_back(std::move(join_clause));
   }
 
   if (current < end && toks[current].type == TokenType::Keyword &&

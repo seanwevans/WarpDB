@@ -195,6 +195,13 @@ struct QueryPlan {
     PlanExecutionKind execution_kind = PlanExecutionKind::SelectExpression;
 };
 
+const HostColumn *resolve_select_column(const HostTable &table, const std::string &name) {
+    const auto dot = name.find('.');
+    const std::string lookup =
+        (dot != std::string::npos && dot + 1 < name.size()) ? name.substr(dot + 1) : name;
+    return table.get_column(lookup);
+}
+
 std::vector<int> filter_rows(const QueryAST &ast, const HostTable &table) {
     std::vector<int> rows;
     int N = table.num_rows();
@@ -528,6 +535,40 @@ void sort_rows_by_order(const QueryAST &ast, const HostTable &table,
     });
 }
 
+float eval_join_node(const ASTNode *node, const HostTable &table, int left_idx,
+                     int right_idx, const std::string &from_table,
+                     const std::string &join_table);
+
+void sort_join_rows_by_order(const QueryAST &ast, const HostTable &table,
+                             std::vector<int> &left_rows,
+                             std::vector<int> &right_rows) {
+    if (!ast.order_by || left_rows.size() != right_rows.size()) return;
+    std::vector<size_t> order(left_rows.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+
+    const std::string &from_table = ast.from_table;
+    const std::string &join_table = ast.joins[0].table;
+    std::stable_sort(order.begin(), order.end(), [&](size_t li, size_t ri) {
+        float lk = eval_join_node(ast.order_by->expr.get(), table, left_rows[li],
+                                  right_rows[li], from_table, join_table);
+        float rk = eval_join_node(ast.order_by->expr.get(), table, left_rows[ri],
+                                  right_rows[ri], from_table, join_table);
+        if (ast.order_by->ascending) return lk < rk;
+        return lk > rk;
+    });
+
+    std::vector<int> sorted_left;
+    std::vector<int> sorted_right;
+    sorted_left.reserve(left_rows.size());
+    sorted_right.reserve(right_rows.size());
+    for (size_t idx : order) {
+        sorted_left.push_back(left_rows[idx]);
+        sorted_right.push_back(right_rows[idx]);
+    }
+    left_rows = std::move(sorted_left);
+    right_rows = std::move(sorted_right);
+}
+
 struct JoinVariableRef {
     std::string relation;
     std::string column;
@@ -700,6 +741,10 @@ float eval_join_node(const ASTNode *node, const HostTable &table, int left_idx,
 QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols, const Table &table) {
     validate_query_ast(ast, cols);
 
+    if (!ast.joins.empty() && ast.group_by) {
+        throw std::runtime_error("JOIN with GROUP BY is not supported yet");
+    }
+
     if (ast.group_by && ast.group_by->keys.size() != 1) {
         throw std::runtime_error(
             "GROUP BY in query_sql currently supports exactly one key expression");
@@ -732,6 +777,111 @@ QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols
 
 QueryResult execute_plan(const QueryPlan &plan, const Table &table,
                          const HostTable &host_table) {
+    if (!plan.ast.joins.empty()) {
+        auto joined_rows = build_inner_join_rows(plan.ast, host_table);
+        std::vector<int> left_rows = std::move(joined_rows.first);
+        std::vector<int> right_rows = std::move(joined_rows.second);
+
+        if (plan.ast.where) {
+            std::vector<int> filtered_left;
+            std::vector<int> filtered_right;
+            filtered_left.reserve(left_rows.size());
+            filtered_right.reserve(right_rows.size());
+            for (size_t i = 0; i < left_rows.size(); ++i) {
+                if (eval_join_node(plan.ast.where.value().get(), host_table,
+                                   left_rows[i], right_rows[i], plan.ast.from_table,
+                                   plan.ast.joins[0].table) != 0.0f) {
+                    filtered_left.push_back(left_rows[i]);
+                    filtered_right.push_back(right_rows[i]);
+                }
+            }
+            left_rows = std::move(filtered_left);
+            right_rows = std::move(filtered_right);
+        }
+
+        sort_join_rows_by_order(plan.ast, host_table, left_rows, right_rows);
+        const size_t off =
+            plan.ast.offset ? static_cast<size_t>(std::max(plan.ast.offset->count, 0)) : 0;
+        const size_t start = std::min(off, left_rows.size());
+        size_t end = left_rows.size();
+        if (plan.ast.limit) {
+            end = std::min(
+                end, start + static_cast<size_t>(std::max(plan.ast.limit->count, 0)));
+        }
+
+        std::vector<int> projected_left(
+            left_rows.begin() + static_cast<std::ptrdiff_t>(start),
+            left_rows.begin() + static_cast<std::ptrdiff_t>(end));
+        std::vector<int> projected_right(
+            right_rows.begin() + static_cast<std::ptrdiff_t>(start),
+            right_rows.begin() + static_cast<std::ptrdiff_t>(end));
+
+        if (plan.ast.select_list.size() == 1) {
+            auto *var = dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
+            if (var) {
+                const HostColumn *col = resolve_select_column(host_table, var->name);
+                if (!col) {
+                    throw std::runtime_error("Unknown column in SELECT: " + var->name);
+                }
+                auto qualified = parse_join_variable_name(var->name);
+                const bool use_right =
+                    qualified && qualified->relation == plan.ast.joins[0].table;
+                ColumnData result = select_typed_column(
+                    *col, use_right ? projected_right : projected_left);
+                if (plan.ast.distinct) {
+                    apply_distinct(result);
+                }
+                return QueryResult(std::move(result));
+            }
+
+            std::vector<float> result;
+            result.reserve(projected_left.size());
+            for (size_t i = 0; i < projected_left.size(); ++i) {
+                result.push_back(eval_join_node(plan.ast.select_list[0].get(), host_table,
+                                                projected_left[i], projected_right[i],
+                                                plan.ast.from_table,
+                                                plan.ast.joins[0].table));
+            }
+            ColumnData boxed = std::move(result);
+            if (plan.ast.distinct) {
+                apply_distinct(boxed);
+            }
+            return QueryResult(std::move(boxed));
+        }
+
+        if (plan.ast.distinct) {
+            throw std::runtime_error(
+                "DISTINCT with multiple SELECT expressions is not supported yet");
+        }
+
+        std::vector<ColumnData> projected;
+        projected.reserve(plan.ast.select_list.size());
+        for (const auto &expr : plan.ast.select_list) {
+            if (auto *var = dynamic_cast<VariableNode *>(expr.get())) {
+                const HostColumn *col = resolve_select_column(host_table, var->name);
+                if (!col) {
+                    throw std::runtime_error("Unknown column in SELECT: " + var->name);
+                }
+                auto qualified = parse_join_variable_name(var->name);
+                const bool use_right =
+                    qualified && qualified->relation == plan.ast.joins[0].table;
+                projected.push_back(
+                    select_typed_column(*col, use_right ? projected_right : projected_left));
+                continue;
+            }
+
+            std::vector<float> out;
+            out.reserve(projected_left.size());
+            for (size_t i = 0; i < projected_left.size(); ++i) {
+                out.push_back(eval_join_node(expr.get(), host_table, projected_left[i],
+                                             projected_right[i], plan.ast.from_table,
+                                             plan.ast.joins[0].table));
+            }
+            projected.emplace_back(std::move(out));
+        }
+        return QueryResult(std::move(projected));
+    }
+
     std::vector<int> rows = filter_rows(plan.ast, host_table);
     if (plan.ast.group_by) {
         ColumnData result = std::vector<float>{};
@@ -751,7 +901,7 @@ QueryResult execute_plan(const QueryPlan &plan, const Table &table,
         ColumnData result = std::vector<float>{};
         if (plan.execution_kind == PlanExecutionKind::SelectColumn) {
             auto *var = dynamic_cast<VariableNode *>(plan.ast.select_list[0].get());
-            const HostColumn *col = host_table.get_column(var->name);
+            const HostColumn *col = resolve_select_column(host_table, var->name);
             if (!col) {
                 throw std::runtime_error("Unknown column in SELECT: " + var->name);
             }
@@ -792,7 +942,7 @@ QueryResult execute_plan(const QueryPlan &plan, const Table &table,
     projected.reserve(plan.ast.select_list.size());
     for (const auto &expr : plan.ast.select_list) {
         if (auto *var = dynamic_cast<VariableNode *>(expr.get())) {
-            const HostColumn *col = host_table.get_column(var->name);
+            const HostColumn *col = resolve_select_column(host_table, var->name);
             if (!col) {
                 throw std::runtime_error("Unknown column in SELECT: " + var->name);
             }
