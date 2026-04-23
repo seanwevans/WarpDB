@@ -67,18 +67,13 @@ static void test_real_stats_prevent_elimination() {
     assert(!always_false);
 }
 
-static void test_join_is_rejected_during_ast_generation() {
+static void test_join_is_parsed_for_optimizer_input() {
     auto tokens = tokenize(
         "SELECT a.v FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id");
-    bool rejected_join = false;
-    try {
-        (void)parse_query(tokens);
-    } catch (const std::runtime_error &e) {
-        rejected_join = std::string(e.what()).find(
-                            "JOIN is parsed but not supported for execution yet") !=
-                        std::string::npos;
-    }
-    assert(rejected_join);
+    QueryAST ast = parse_query(tokens);
+    assert(ast.joins.size() == 2);
+    assert(ast.joins[0].table == "b");
+    assert(ast.joins[1].table == "c");
 }
 
 static void test_estimate_equi_join_rows_uses_max_ndv() {
@@ -90,7 +85,7 @@ int main() {
     test_missing_stats_skip_elimination();
     test_analyze_condition_always_false();
     test_real_stats_prevent_elimination();
-    test_join_is_rejected_during_ast_generation();
+    test_join_is_parsed_for_optimizer_input();
     test_estimate_equi_join_rows_uses_max_ndv();
     std::cout << "Optimizer tests passed\n";
     return 0;

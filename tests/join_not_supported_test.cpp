@@ -5,17 +5,14 @@
 int main() {
     WarpDB db("data/test.csv");
 
-    bool rejected_join = false;
-    try {
-        (void)db.query_sql(
-            "SELECT right.price FROM left JOIN right ON left.quantity = right.quantity "
-            "WHERE left.price > 10");
-    } catch (const std::runtime_error &e) {
-        rejected_join = std::string(e.what()).find(
-                            "JOIN is parsed but not supported for execution yet") !=
-                        std::string::npos;
-    }
-    assert(rejected_join);
+    auto joined = db.query_sql(
+        "SELECT right.price FROM left JOIN right ON left.quantity = right.quantity "
+        "WHERE left.price > 10 ORDER BY left.price ASC");
+    const auto &vals = joined.as<float>();
+    assert(vals.size() == 3);
+    assert(vals[0] == 15.25f);
+    assert(vals[1] == 20.0f);
+    assert(vals[2] == 30.0f);
 
     return 0;
 }

@@ -319,8 +319,8 @@ The project has recently gained several improvements:
 - Currently supports a limited subset of SQL functionality
 - CSV and JSON paths are the most mature; JSON loading currently expects
   newline-delimited objects with `price` and `quantity`
-- SQL support includes filtering, aggregations, ordering, LIMIT/OFFSET, and
-  HAVING; JOIN syntax is parsed but execution is not implemented
+- SQL support includes filtering, aggregations, ordering, LIMIT/OFFSET, HAVING,
+  and a host-side single-inner-equi JOIN path
 - Non-GROUP-BY SQL execution supports only one SELECT expression
 - Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
