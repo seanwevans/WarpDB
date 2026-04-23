@@ -69,5 +69,15 @@ int main() {
     assert(std::abs(res[1] - (20.5f + 3)) < 1e-5);
     assert(std::abs(res[2] - (30.25f + 7)) < 1e-5);
 
+    bool threw_on_string_expr = false;
+    try {
+        (void)db.query("name");
+    } catch (const std::runtime_error& e) {
+        threw_on_string_expr =
+            std::string(e.what()).find("String columns are not supported in GPU JIT expressions") !=
+            std::string::npos;
+    }
+    assert(threw_on_string_expr && "Expected query using string column to throw");
+
     return 0;
 }
