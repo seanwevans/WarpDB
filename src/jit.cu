@@ -475,11 +475,12 @@ void jit_group_sum(const std::string &val_expr_code,
   int *tmp_keys_ptr = tmp_keys.get();
   std::vector<void *> args{&d_price, &d_quantity, &tmp_vals_ptr,
                            &tmp_keys_ptr, &N};
-  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0, 0,
+  CU_CHECK(cuLaunchKernel(kernel_func, blocks, 1, 1, threads, 1, 1, 0,
+                          reinterpret_cast<CUstream>(cudaStreamPerThread),
                           args.data(), nullptr));
   CU_CHECK(cuCtxSynchronize());
 
-  auto exec_policy = thrust::cuda::par.on(0);
+  auto exec_policy = thrust::cuda::par.on(cudaStreamPerThread);
   auto tmp_keys_begin = thrust::device_pointer_cast(tmp_keys.get());
   auto tmp_vals_begin = thrust::device_pointer_cast(tmp_vals.get());
   thrust::sort_by_key(exec_policy, tmp_keys_begin, tmp_keys_begin + N,
@@ -512,7 +513,7 @@ template <typename KeyT, typename ValueT, typename ReduceOp>
 int jit_group_reduce_impl(const void *d_keys_raw, const void *d_values_raw,
                           int64_t *d_out_keys, float *d_out_vals, int N,
                           ReduceOp reduce_op) {
-  auto exec_policy = thrust::cuda::par.on(0);
+  auto exec_policy = thrust::cuda::par.on(cudaStreamPerThread);
   const auto *d_keys = static_cast<const KeyT *>(d_keys_raw);
   const auto *d_values = static_cast<const ValueT *>(d_values_raw);
 
@@ -544,7 +545,7 @@ int jit_group_reduce_impl(const void *d_keys_raw, const void *d_values_raw,
 template <typename KeyT>
 int jit_group_count_impl(const void *d_keys_raw, int64_t *d_out_keys,
                          float *d_out_counts, int N) {
-  auto exec_policy = thrust::cuda::par.on(0);
+  auto exec_policy = thrust::cuda::par.on(cudaStreamPerThread);
   const auto *d_keys = static_cast<const KeyT *>(d_keys_raw);
 
   DeviceBuffer<KeyT> tmp_keys(static_cast<size_t>(N));
