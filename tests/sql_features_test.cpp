@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "warpdb.hpp"
 #include "csv_loader.hpp"
 #include <cassert>
@@ -8,6 +9,7 @@
 #include <fstream>
 
 int main(){
+    if (warpdb_skip_if_no_cuda("sql_features_test")) return 0;
     WarpDB db("data/test.csv");
     auto single_expr = db.query_sql("SELECT price FROM test");
     assert(single_expr.size() == 4);

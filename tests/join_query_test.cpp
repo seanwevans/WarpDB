@@ -1,8 +1,10 @@
+#include "test_utils.hpp"
 #include "warpdb.hpp"
 #include <cassert>
 #include <vector>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("join_query_test")) return 0;
     WarpDB db("data/test.csv");
 
     auto joined = db.query_sql(

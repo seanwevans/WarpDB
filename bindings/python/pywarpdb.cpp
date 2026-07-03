@@ -1,5 +1,6 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <cuda_runtime.h>
 #include "warpdb.hpp"
 
 namespace py = pybind11;
@@ -19,6 +20,13 @@ PYBIND11_MODULE(pywarpdb, m) {
     py::enum_<ParsePolicy>(m, "ParsePolicy")
         .value("Strict", ParsePolicy::Strict)
         .value("Permissive", ParsePolicy::Permissive);
+
+    m.def("cuda_device_count", []() {
+                int count = 0;
+                if (cudaGetDeviceCount(&count) != cudaSuccess) return 0;
+                return count;
+             },
+             R"pbdoc(Return the number of available CUDA devices (0 if none).)pbdoc");
 
     py::class_<WarpDB>(m, "WarpDB")
         .def(py::init<const std::string &, const std::vector<DataType>&, ParsePolicy>(),

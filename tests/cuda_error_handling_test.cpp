@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "csv_loader.hpp"
 #include "json_loader.hpp"
 #include <cassert>
@@ -5,6 +6,7 @@
 #include <iostream>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("cuda_error_handling_test")) return 0;
     // Hide any available GPUs so CUDA calls fail deterministically.
     setenv("CUDA_VISIBLE_DEVICES", "", 1);
 

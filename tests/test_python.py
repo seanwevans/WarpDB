@@ -1,5 +1,13 @@
 import csv
+import sys
+
 import pywarpdb
+
+# WarpDB requires a CUDA device at runtime. Skip cleanly when none is
+# available (e.g. GPU-less CI) instead of failing during construction.
+if pywarpdb.cuda_device_count() == 0:
+    print("[SKIP] test_python.py: no CUDA device available")
+    sys.exit(0)
 
 # Constructor with explicit schema and parse policy
 schema = [pywarpdb.DataType.Float32, pywarpdb.DataType.Int32]
