@@ -28,6 +28,11 @@ if(Arrow_FOUND)
     include_directories(${Arrow_INCLUDE_DIRS})
 endif()
 
+# warpdb.cpp uses Thrust with a CUDA execution policy (thrust::device), which
+# must be compiled by nvcc rather than the host C++ compiler. Compile it as a
+# CUDA source everywhere it is used (the warpdb executable and warpdb_lib).
+set_source_files_properties(src/warpdb.cpp PROPERTIES LANGUAGE CUDA)
+
 set(WARPDB_SRC
     src/main.cu
     src/warpdb.cpp
