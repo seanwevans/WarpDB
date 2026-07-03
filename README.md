@@ -197,9 +197,11 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 # Limit results after sorting
 ./warpdb "SELECT price FROM test ORDER BY price DESC LIMIT 5"
 
-# Note: non-GROUP-BY SQL currently supports a single SELECT expression.
-# The following is not yet supported:
-# ./warpdb "SELECT price, quantity FROM test"
+# Non-GROUP-BY SQL can project multiple columns; each result row prints the
+# selected columns in order:
+./warpdb "SELECT price, quantity FROM test"
+
+# Note: GROUP BY queries still support only a single SELECT expression.
 ```
 
 ### Multi-GPU Example
@@ -317,11 +319,12 @@ The project has recently gained several improvements:
 ## Limitations
 
 - Currently supports a limited subset of SQL functionality
-- CSV and JSON paths are the most mature; JSON loading currently expects
-  newline-delimited objects with `price` and `quantity`
+- CSV and JSON paths are the most mature; JSON loading reads newline-delimited
+  objects and infers each column's type, with an optional user-supplied schema
+  map for deterministic typing
 - SQL support includes filtering, aggregations, ordering, LIMIT/OFFSET, HAVING,
   and a host-side single-inner-equi JOIN path
-- Non-GROUP-BY SQL execution supports only one SELECT expression
+- GROUP BY execution supports only one SELECT expression and one grouping key
 - Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
 - Building the Python module requires `pybind11` or disable it with
