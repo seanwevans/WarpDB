@@ -30,6 +30,7 @@ endif()
 
 set(WARPDB_SRC
     src/main.cu
+    src/warpdb.cpp
     src/csv_loader.cpp
     src/json_loader.cpp
     src/expression.cpp
