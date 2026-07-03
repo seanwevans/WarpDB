@@ -75,8 +75,8 @@ public:
     QueryResult query(const std::string &expr);
 
     // Execute a full SQL query supporting WHERE/GROUP BY/HAVING/ORDER BY,
-    // DISTINCT/LIMIT/OFFSET on a single loaded table.
-    // JOIN clauses are currently rejected during SQL AST generation.
+    // DISTINCT/LIMIT/OFFSET on a single loaded table. A single inner equi-JOIN
+    // is also supported and executed on the host.
     QueryResult query_sql(const std::string &sql);
 
     // Execute a query using all available GPUs on the data loaded in this

@@ -100,6 +100,23 @@ __global__ void project_columns(float *price, int *quantity, float *out_price,
 }
 
 
+// Print query results, supporting multiple SELECT columns of arbitrary type.
+static void print_query_results(const QueryResult &results) {
+  const size_t rows = results.size();
+  const size_t cols = results.column_count();
+  std::cout << "Query returned " << rows << " rows.\n";
+  for (size_t r = 0; r < rows; ++r) {
+    std::cout << "Result[" << r << "] = ";
+    for (size_t c = 0; c < cols; ++c) {
+      if (c > 0)
+        std::cout << ", ";
+      std::visit([r](const auto &vec) { std::cout << vec[r]; },
+                 results.column_data(c));
+    }
+    std::cout << "\n";
+  }
+}
+
 int main(int argc, char **argv) {
   try {
     if (argc < 2) {
@@ -113,10 +130,7 @@ int main(int argc, char **argv) {
     WarpDB db(csv_path);
     auto results = db.query_sql(sql_query);
 
-    std::cout << "Query returned " << results.size() << " rows.\n";
-    for (size_t i = 0; i < results.size(); ++i) {
-      std::cout << "Result[" << i << "] = " << results[i] << "\n";
-    }
+    print_query_results(results);
 
     return 0;
   } catch (const std::exception &e) {

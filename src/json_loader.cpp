@@ -300,7 +300,10 @@ HostTable load_json_to_host(
       const auto &col_name = host.columns[c].name;
       const auto &col_type = host.columns[c].type;
 
-      if (!row.contains(col_name) || row.at(col_name).is_null()) {
+      // Use find()/end() instead of contains(): the latter was only added in
+      // nlohmann/json v3.6.0, while this project pins v3.2.0 (see CMakeLists.txt
+      // and setup.py). find() returns end() for missing keys and non-objects.
+      if (row.find(col_name) == row.end() || row.at(col_name).is_null()) {
         std::cerr << "Error parsing JSON line " << (i + 1)
                   << ": missing field '" << col_name << "'" << std::endl;
         row_valid = false;
