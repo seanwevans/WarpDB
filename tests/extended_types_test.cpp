@@ -1,8 +1,10 @@
+#include "test_utils.hpp"
 #include "warpdb.hpp"
 #include <cassert>
 #include <iostream>
 
 int main(){
+    if (warpdb_skip_if_no_cuda("extended_types_test")) return 0;
     std::vector<DataType> schema = {DataType::Float32, DataType::Int32, DataType::Float32};
     WarpDB db("data/extended.csv", schema);
     auto res = db.query("price * discount");

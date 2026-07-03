@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "expression.hpp"
 #include "jit.hpp"
 #include <cuda_runtime.h>
@@ -51,6 +52,7 @@ void test_scientific_literal_compiles() {
 }
 
 int main() {
+    if (warpdb_skip_if_no_cuda("expression_tests")) return 0;
     test_malformed_expression();
     test_scientific_literal_compiles();
     std::cout << "All tests passed\n";

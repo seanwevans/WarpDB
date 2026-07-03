@@ -1,8 +1,10 @@
+#include "test_utils.hpp"
 #include "csv_loader.hpp"
 #include <cassert>
 #include <iostream>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("csv_loader_header_only_gpu_test")) return 0;
     bool threw = false;
     Table table;
     try {

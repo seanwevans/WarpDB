@@ -1,9 +1,11 @@
+#include "test_utils.hpp"
 #include "jit.hpp"
 #include <cuda_runtime.h>
 #include <cassert>
 #include <iostream>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("jit_error_test")) return 0;
     float *price; cudaMalloc(&price, sizeof(float));
     int *quantity; cudaMalloc(&quantity, sizeof(int));
     float *output; cudaMalloc(&output, sizeof(float));

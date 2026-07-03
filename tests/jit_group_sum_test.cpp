@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "jit.hpp"
 #include <algorithm>
 #include <cassert>
@@ -7,6 +8,7 @@
 #include <vector>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("jit_group_sum_test")) return 0;
     const int N = 1 << 15;
     const int num_groups = 4096;
 

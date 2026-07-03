@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "warpdb.hpp"
 #include "csv_loader.hpp"
 #include "cuda_utils.hpp"
@@ -7,6 +8,7 @@
 #include <cmath>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("string_column_query_test")) return 0;
     std::vector<DataType> schema{DataType::String, DataType::Float32, DataType::Int32};
 
     HostTable host = load_csv_to_host("data/string_test.csv", schema);

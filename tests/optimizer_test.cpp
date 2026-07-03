@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "optimizer.hpp"
 #include <cassert>
 #include <sstream>
@@ -82,6 +83,7 @@ static void test_estimate_equi_join_rows_uses_max_ndv() {
 }
 
 int main() {
+    if (warpdb_skip_if_no_cuda("optimizer_test")) return 0;
     test_missing_stats_skip_elimination();
     test_analyze_condition_always_false();
     test_real_stats_prevent_elimination();

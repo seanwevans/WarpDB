@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "warpdb.hpp"
 #include <cassert>
 #include <cmath>
@@ -6,6 +7,7 @@
 #include <string>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("multi_gpu_arbitrary_columns_test")) return 0;
     WarpDB db("data/arbitrary_columns.csv");
     auto direct = db.query_multi_gpu("alpha * beta");
     assert(direct.size() == 3);

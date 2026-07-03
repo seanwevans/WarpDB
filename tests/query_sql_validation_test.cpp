@@ -1,8 +1,10 @@
+#include "test_utils.hpp"
 #include "warpdb.hpp"
 #include <cassert>
 #include <iostream>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("query_sql_validation_test")) return 0;
     WarpDB db("data/test.csv");
     bool threw = false;
     try {

@@ -1,9 +1,11 @@
+#include "test_utils.hpp"
 #include "jit.hpp"
 #include <cuda_runtime.h>
 #include <cassert>
 #include <iostream>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("jit_arch_test")) return 0;
     float h_price = 2.0f;
     int h_quantity = 0;
     float h_output = 0.0f;

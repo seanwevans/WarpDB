@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "jit.hpp"
 #include <cuda_runtime.h>
 
@@ -8,6 +9,7 @@
 #include <vector>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("jit_cache_test")) return 0;
     reset_jit_cache();
 
     const int N = 256;

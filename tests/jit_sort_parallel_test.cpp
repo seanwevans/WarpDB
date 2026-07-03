@@ -1,3 +1,4 @@
+#include "test_utils.hpp"
 #include "jit.hpp"
 #include <algorithm>
 #include <cassert>
@@ -29,6 +30,7 @@ void validate_sorted(const std::vector<float> &values, bool ascending) {
 }
 
 int main() {
+    if (warpdb_skip_if_no_cuda("jit_sort_parallel_test")) return 0;
     const int device_id = 0;
     const int count = 1 << 18; // 262,144 elements
 

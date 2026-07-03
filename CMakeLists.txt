@@ -28,8 +28,14 @@ if(Arrow_FOUND)
     include_directories(${Arrow_INCLUDE_DIRS})
 endif()
 
+# warpdb.cpp uses Thrust with a CUDA execution policy (thrust::device), which
+# must be compiled by nvcc rather than the host C++ compiler. Compile it as a
+# CUDA source everywhere it is used (the warpdb executable and warpdb_lib).
+set_source_files_properties(src/warpdb.cpp PROPERTIES LANGUAGE CUDA)
+
 set(WARPDB_SRC
     src/main.cu
+    src/warpdb.cpp
     src/csv_loader.cpp
     src/json_loader.cpp
     src/expression.cpp
@@ -271,6 +277,69 @@ if(Arrow_FOUND)
     target_link_libraries(arrow_host_multi_gpu_sql_test PRIVATE warpdb_lib)
     add_test(NAME arrow_host_multi_gpu_sql_test COMMAND arrow_host_multi_gpu_sql_test)
 endif()
+
+
+# Tests that previously existed in tests/ but were never registered with CTest.
+
+# Host-only parser/query tests (only need the expression sources).
+add_executable(parse_query_error_test
+    tests/parse_query_error_test.cpp
+    src/expression.cpp
+)
+add_test(NAME parse_query_error_test COMMAND parse_query_error_test)
+
+add_executable(tokenize_error_test
+    tests/tokenize_error_test.cpp
+    src/expression.cpp
+)
+add_test(NAME tokenize_error_test COMMAND tokenize_error_test)
+
+add_executable(precedence_tests
+    tests/precedence_tests.cpp
+    src/expression.cpp
+)
+add_test(NAME precedence_tests COMMAND precedence_tests)
+
+add_executable(identifier_validation_test
+    tests/identifier_validation_test.cpp
+    src/expression.cpp
+)
+add_test(NAME identifier_validation_test COMMAND identifier_validation_test)
+
+add_executable(having_offset_query_test
+    tests/having_offset_query_test.cpp
+    src/expression.cpp
+)
+add_test(NAME having_offset_query_test COMMAND having_offset_query_test)
+
+# Tests that link the full library. They run on the host but skip GPU work
+# gracefully when no CUDA device is present (see tests/test_utils.hpp).
+add_executable(eval_helper_test tests/eval_helper_test.cpp)
+target_link_libraries(eval_helper_test PRIVATE warpdb_lib)
+add_test(NAME eval_helper_test COMMAND eval_helper_test)
+
+add_executable(csv_from_chars_test tests/csv_from_chars_test.cpp)
+target_link_libraries(csv_from_chars_test PRIVATE warpdb_lib)
+add_test(NAME csv_from_chars_test COMMAND csv_from_chars_test)
+
+add_executable(csv_loader_chunk_test tests/csv_loader_chunk_test.cpp)
+target_link_libraries(csv_loader_chunk_test PRIVATE warpdb_lib)
+add_test(NAME csv_loader_chunk_test COMMAND csv_loader_chunk_test)
+
+add_executable(having_distinct_test tests/having_distinct_test.cpp)
+target_link_libraries(having_distinct_test PRIVATE warpdb_lib)
+add_test(NAME having_distinct_test COMMAND having_distinct_test)
+
+add_executable(query_sql_validation_test tests/query_sql_validation_test.cpp)
+target_link_libraries(query_sql_validation_test PRIVATE warpdb_lib)
+add_test(NAME query_sql_validation_test COMMAND query_sql_validation_test)
+
+add_executable(jit_compile_log_test
+    tests/jit_compile_log_test.cpp
+    src/jit.cu
+)
+target_link_libraries(jit_compile_log_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
+add_test(NAME jit_compile_log_test COMMAND jit_compile_log_test)
 
 
 option(WARPDB_BUILD_PYTHON "Build Python bindings with pybind11" ON)

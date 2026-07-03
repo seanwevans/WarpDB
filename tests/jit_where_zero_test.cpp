@@ -1,9 +1,11 @@
+#include "test_utils.hpp"
 #include "jit.hpp"
 #include <cuda_runtime.h>
 #include <cassert>
 #include <vector>
 
 int main() {
+    if (warpdb_skip_if_no_cuda("jit_where_zero_test")) return 0;
     const int N = 3;
     std::vector<float> h_price = {1.0f, 2.0f, 3.0f};
     std::vector<float> h_output_init(N, 5.0f);
