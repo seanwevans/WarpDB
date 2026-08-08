@@ -102,6 +102,14 @@ add_executable(tokenizer_tests
 add_test(NAME tokenizer_tests COMMAND tokenizer_tests)
 
 
+add_executable(equals_operator_test
+    tests/equals_operator_test.cpp
+    src/expression.cpp
+)
+
+add_test(NAME equals_operator_test COMMAND equals_operator_test)
+
+
 add_executable(sql_features_test
     tests/sql_features_test.cpp
 )
