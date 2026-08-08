@@ -307,6 +307,31 @@ ASTNodePtr Parser::parse_factor() {
   if (tok.type == TokenType::Number) {
     advance();
     return std::make_unique<ConstantNode>(tok.value);
+  } else if (tok.type == TokenType::Keyword &&
+             (tok.value == "SUM" || tok.value == "AVG" ||
+              tok.value == "COUNT" || tok.value == "MIN" ||
+              tok.value == "MAX")) {
+    // Aggregate functions may appear in expression contexts such as HAVING
+    // (e.g. "HAVING SUM(price) > 10"). The SELECT list has its own aggregate
+    // handling; here we support them anywhere an expression is parsed so that
+    // the host-side aggregate evaluator can filter groups by their aggregates.
+    std::string kw = tok.value;
+    advance();
+    if (!match("("))
+      throw std::runtime_error("Expected '(' after " + kw + " aggregation");
+    ASTNodePtr inner = parse_expression_internal();
+    if (!match(")"))
+      throw std::runtime_error("Expected ')' after " + kw + " argument");
+    AggregationType at = AggregationType::Sum;
+    if (kw == "AVG")
+      at = AggregationType::Avg;
+    else if (kw == "COUNT")
+      at = AggregationType::Count;
+    else if (kw == "MIN")
+      at = AggregationType::Min;
+    else if (kw == "MAX")
+      at = AggregationType::Max;
+    return std::make_unique<AggregationNode>(at, std::move(inner));
   } else if (tok.type == TokenType::Identifier) {
     std::string ident = tok.value;
     advance();

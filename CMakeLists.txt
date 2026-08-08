@@ -102,6 +102,12 @@ add_executable(tokenizer_tests
 add_test(NAME tokenizer_tests COMMAND tokenizer_tests)
 
 
+add_executable(having_aggregate_test
+    tests/having_aggregate_test.cpp
+    src/expression.cpp
+)
+
+add_test(NAME having_aggregate_test COMMAND having_aggregate_test)
 add_executable(equals_operator_test
     tests/equals_operator_test.cpp
     src/expression.cpp

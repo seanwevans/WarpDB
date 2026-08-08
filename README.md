@@ -194,6 +194,8 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 
 # Use the SQL helper for GROUP BY
 ./warpdb "SELECT SUM(price) FROM test GROUP BY quantity"
+# Filter groups by an aggregate with HAVING
+./warpdb "SELECT SUM(price) FROM test GROUP BY quantity HAVING SUM(price) > 20"
 # Limit results after sorting
 ./warpdb "SELECT price FROM test ORDER BY price DESC LIMIT 5"
 
