@@ -116,6 +116,14 @@ add_executable(equals_operator_test
 add_test(NAME equals_operator_test COMMAND equals_operator_test)
 
 
+add_executable(eval_logical_ops_test
+    tests/eval_logical_ops_test.cpp
+    src/expression.cpp
+)
+
+add_test(NAME eval_logical_ops_test COMMAND eval_logical_ops_test)
+
+
 add_executable(sql_features_test
     tests/sql_features_test.cpp
 )
