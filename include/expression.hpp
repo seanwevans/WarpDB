@@ -148,6 +148,9 @@ struct GroupByClause {
 
 struct QueryAST {
   std::vector<ASTNodePtr> select_list;
+  // Set when the SELECT list is a single '*'. The select_list is left empty and
+  // expanded to every column of the source table at execution time.
+  bool select_all = false;
   std::string from_table;
   std::vector<JoinClause> joins;
   std::optional<ASTNodePtr> where;

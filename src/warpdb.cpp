@@ -968,6 +968,23 @@ QueryResult WarpDB::query_sql(const std::string &sql) {
         throw std::runtime_error(std::string("Failed to parse SQL: ") + e.what());
     }
 
+    // Expand "SELECT *" into an explicit column list, preserving the table's
+    // column order, before planning. JOIN expansion (which would need
+    // relation-qualified names) is not supported yet.
+    if (ast.select_all) {
+        if (!ast.joins.empty()) {
+            throw std::runtime_error("SELECT * is not supported with JOIN yet");
+        }
+        if (table_.columns.empty()) {
+            throw std::runtime_error("SELECT * requires at least one column");
+        }
+        ast.select_list.clear();
+        for (const auto &c : table_.columns) {
+            ast.select_list.push_back(std::make_unique<VariableNode>(c.name));
+        }
+        ast.select_all = false;
+    }
+
     std::unordered_set<std::string> cols;
     for (const auto &c : table_.columns) cols.insert(c.name);
 
