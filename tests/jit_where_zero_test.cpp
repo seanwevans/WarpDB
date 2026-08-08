@@ -19,7 +19,7 @@ int main() {
 
     Table table;
     table.num_rows = N;
-    table.columns.push_back({"price", DataType::Float32, d_price, N});
+    table.columns.push_back(warpdb_make_device_column("price", DataType::Float32, d_price, N));
 
     jit_compile_and_launch("price * 2.0f", "price > 2.0f", table, d_output);
 

@@ -12,8 +12,8 @@ int main() {
 
     Table table;
     table.num_rows = 1;
-    table.columns.push_back({"price", DataType::Float32, price, 1});
-    table.columns.push_back({"quantity", DataType::Int32, quantity, 1});
+    table.columns.push_back(warpdb_make_device_column("price", DataType::Float32, price, 1));
+    table.columns.push_back(warpdb_make_device_column("quantity", DataType::Int32, quantity, 1));
 
     bool threw = false;
     try {
