@@ -6,6 +6,16 @@ on:
   pull_request:
 
 jobs:
+  host-tests:
+    # Fast, GPU-free lane that builds and runs the parser/host tests directly
+    # with g++. Catches SQL tokenizer/parser and codegen regressions without
+    # needing the CUDA toolkit.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run host-only parser tests
+        run: ./tests/run_host_tests.sh
+
   build:
     runs-on: ubuntu-latest
     steps:
