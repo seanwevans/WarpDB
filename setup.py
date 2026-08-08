@@ -7,6 +7,11 @@ from setuptools import setup
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 
 
+# .cpp sources that use Thrust device execution policies (thrust::device) and
+# therefore must be compiled by nvcc, not the host C++ compiler. Compiling them
+# with gcc triggers Thrust's "unimplemented for this system" static assertion.
+CUDA_CPP_SOURCES = {'warpdb.cpp'}
+
 NLOHMANN_JSON_VERSION = 'v3.2.0'
 NLOHMANN_JSON_URLS = [
     f'https://raw.githubusercontent.com/nlohmann/json/{NLOHMANN_JSON_VERSION}/single_include/nlohmann/json.hpp',
@@ -56,7 +61,10 @@ class WarpDBBuildExt(build_ext):
         super_compile = self.compiler._compile
 
         def _compile(obj, src, ext, cc_args, extra_postargs, pp_opts):
-            is_cuda = os.path.splitext(src)[1] == '.cu'
+            src_ext = os.path.splitext(src)[1]
+            # .cu is CUDA; a few .cpp sources also require nvcc (see
+            # CUDA_CPP_SOURCES) because they use Thrust device execution.
+            compile_as_cuda = src_ext == '.cu' or os.path.basename(src) in CUDA_CPP_SOURCES
 
             if isinstance(extra_postargs, dict):
                 cxx_postargs = extra_postargs.get('cxx', [])
@@ -66,9 +74,14 @@ class WarpDBBuildExt(build_ext):
                 nvcc_postargs = extra_postargs
 
             try:
-                if is_cuda:
+                if compile_as_cuda:
                     self.compiler.set_executable('compiler_so', os.environ.get('NVCC', 'nvcc'))
                     postargs = ['-std=c++17', *nvcc_postargs]
+                    if src_ext != '.cu':
+                        # nvcc infers language from the extension; force CUDA for
+                        # .cpp sources. '-x cu' must precede the input file, so
+                        # prepend it to cc_args (postargs come after the source).
+                        cc_args = ['-x', 'cu', *cc_args]
                 else:
                     postargs = cxx_postargs
 
