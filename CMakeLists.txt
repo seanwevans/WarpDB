@@ -282,10 +282,13 @@ add_executable(jit_cache_test
 target_link_libraries(jit_cache_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_cache_test COMMAND jit_cache_test)
 
+# optimizer.cpp calls jit_compile_and_launch (defined in jit.cu), so the JIT
+# translation unit must be part of this target to satisfy the reference.
 add_executable(optimizer_test
     tests/optimizer_test.cpp
     src/expression.cpp
     src/optimizer.cpp
+    src/jit.cu
 )
 target_link_libraries(optimizer_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME optimizer_test COMMAND optimizer_test)
