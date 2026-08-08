@@ -28,8 +28,8 @@ int main() {
 
     Table table;
     table.num_rows = N;
-    table.columns.push_back({"price", DataType::Float32, d_price, N});
-    table.columns.push_back({"quantity", DataType::Int32, d_quantity, N});
+    table.columns.push_back(warpdb_make_device_column("price", DataType::Float32, d_price, N));
+    table.columns.push_back(warpdb_make_device_column("quantity", DataType::Int32, d_quantity, N));
 
     auto timed_run = [&](float *out_ptr) {
         auto start = std::chrono::steady_clock::now();

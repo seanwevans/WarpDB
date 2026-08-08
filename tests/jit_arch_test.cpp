@@ -23,8 +23,8 @@ int main() {
 
     Table table;
     table.num_rows = 1;
-    table.columns.push_back({"price", DataType::Float32, d_price, 1});
-    table.columns.push_back({"quantity", DataType::Int32, d_quantity, 1});
+    table.columns.push_back(warpdb_make_device_column("price", DataType::Float32, d_price, 1));
+    table.columns.push_back(warpdb_make_device_column("quantity", DataType::Int32, d_quantity, 1));
 
     bool threw = false;
     try {
