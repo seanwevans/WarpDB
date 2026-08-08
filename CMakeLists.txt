@@ -15,6 +15,11 @@ set(CMAKE_CXX_STANDARD 17)
 # warpdb_lib, so without this they fail to find "expression.hpp".
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# ctest runs from the build directory, but several loader tests open data files
+# by relative path (e.g. "data/numeric_valid.csv"). Copy the data directory into
+# the build tree at configure time so those paths resolve.
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/data DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
 find_package(CUDAToolkit REQUIRED)
 
 find_package(Arrow QUIET COMPONENTS cuda)
