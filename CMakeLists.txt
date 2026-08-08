@@ -77,10 +77,13 @@ add_executable(expression_test
 add_test(NAME expression_test COMMAND expression_test)
 
 
+# expression_tests exercises the CUDA JIT path (jit_compile_and_launch,
+# cudaMalloc/cudaMemcpy, and the skip-if-no-CUDA helper), so it must link the
+# full library rather than only src/expression.cpp.
 add_executable(expression_tests
     tests/expression_tests.cpp
-    src/expression.cpp
 )
+target_link_libraries(expression_tests PRIVATE warpdb_lib)
 
 add_test(NAME expression_tests COMMAND expression_tests)
 
