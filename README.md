@@ -274,6 +274,8 @@ WarpDB implements a simple recursive descent parser to transform SQL-like expres
 - Comparison operations (`>`, `<`, `>=`, `<=`, `==`, `!=`)
   - The tokenizer checks two-character operators (e.g., `>=`, `<=`) before
     handling single-character ones.
+  - A single `=` is also accepted and treated as equality (equivalent to `==`),
+    matching SQL syntax such as `WHERE price = 10` and `JOIN ... ON a.id = b.id`.
 - Parenthesized expressions
 
 ### JIT Compilation
