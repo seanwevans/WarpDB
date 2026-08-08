@@ -23,6 +23,9 @@ host_tests=(
   tests/query_parser_test.cpp
   tests/equals_operator_test.cpp
   tests/having_aggregate_test.cpp
+  tests/not_equal_operator_test.cpp
+  tests/select_star_test.cpp
+  tests/eval_logical_ops_test.cpp
 )
 
 tmp="$(mktemp -d)"
@@ -31,7 +34,10 @@ trap 'rm -rf "$tmp"' EXIT
 fail=0
 for src in "${host_tests[@]}"; do
   name="$(basename "$src" .cpp)"
-  if ! "$CXX" "-std=$STD" -Iinclude "$src" src/expression.cpp -o "$tmp/$name" 2>"$tmp/$name.log"; then
+  # tests/stubs provides lightweight CUDA headers for host-only tests that
+  # transitively include <cuda_runtime.h> (e.g. via eval_helpers.hpp); parser
+  # tests that don't include it are unaffected.
+  if ! "$CXX" "-std=$STD" -Iinclude -Itests/stubs "$src" src/expression.cpp -o "$tmp/$name" 2>"$tmp/$name.log"; then
     echo "FAIL  $name (compile)"
     cat "$tmp/$name.log"
     fail=1
