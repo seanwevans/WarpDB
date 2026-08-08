@@ -203,6 +203,10 @@ arrow_arr = pa.Array._import_from_c(arr_capsule, schema_capsule)
 # selected columns in order:
 ./warpdb "SELECT price, quantity FROM test"
 
+# SELECT * expands to every column of the table, in schema order
+# (not supported together with JOIN):
+./warpdb "SELECT * FROM test WHERE price > 10"
+
 # Note: GROUP BY queries still support only a single SELECT expression.
 ```
 

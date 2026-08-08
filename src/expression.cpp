@@ -450,7 +450,22 @@ QueryAST Parser::parse_query() {
         break;
       item.push_back(toks[current++]);
     }
-    query.select_list.push_back(parse_select_item(item));
+    // A lone '*' selects every column. It is only valid as the sole select
+    // item; combined forms like "SELECT *, price" are rejected.
+    if (item.size() == 1 && item[0].type == TokenType::Operator &&
+        item[0].value == "*") {
+      if (query.select_all || !query.select_list.empty()) {
+        throw std::runtime_error(
+            "'*' must be the only expression in the SELECT list");
+      }
+      query.select_all = true;
+    } else {
+      if (query.select_all) {
+        throw std::runtime_error(
+            "'*' must be the only expression in the SELECT list");
+      }
+      query.select_list.push_back(parse_select_item(item));
+    }
     if (current < end && toks[current].type == TokenType::Operator &&
         toks[current].value == ",")
       current++; // skip comma
