@@ -92,6 +92,15 @@ bindings are skipped.
 Run `ctest` from the `build` directory to execute the project's tests. Some
 tests rely on CUDA and optional libraries like Arrow or pybind11.
 
+The parser and code-generation tests depend only on the host C++ sources and
+can be run without a CUDA toolkit or GPU:
+
+```bash
+./tests/run_host_tests.sh
+```
+
+CI runs this GPU-free lane on every change in addition to the full build.
+
 ## Usage
 
 ```bash
