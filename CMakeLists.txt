@@ -108,6 +108,12 @@ add_executable(having_aggregate_test
 )
 
 add_test(NAME having_aggregate_test COMMAND having_aggregate_test)
+add_executable(equals_operator_test
+    tests/equals_operator_test.cpp
+    src/expression.cpp
+)
+
+add_test(NAME equals_operator_test COMMAND equals_operator_test)
 
 
 add_executable(sql_features_test

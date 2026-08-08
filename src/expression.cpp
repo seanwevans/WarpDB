@@ -248,6 +248,10 @@ ASTNodePtr Parser::parse_comparison() {
   while (match(">") || match("<") || match(">=") || match("<=") ||
          match("==") || match("!=") || match("=")) {
     std::string op = toks[current - 1].value;
+    // SQL uses a single '=' for equality. Normalize it to '==' so generated
+    // CUDA expressions perform a comparison instead of an assignment.
+    if (op == "=")
+      op = "==";
     ASTNodePtr right = parse_expression_internal();
     node =
         std::make_unique<BinaryOpNode>(op, std::move(node), std::move(right));
