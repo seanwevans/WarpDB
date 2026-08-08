@@ -121,6 +121,16 @@ add_executable(equals_operator_test
 add_test(NAME equals_operator_test COMMAND equals_operator_test)
 
 
+add_executable(eval_logical_ops_test
+    tests/eval_logical_ops_test.cpp
+    src/expression.cpp
+)
+# eval_helpers.hpp pulls in cuda_utils.hpp/<cuda_runtime.h> transitively. This
+# test exercises only host logic, so use the lightweight CUDA stub headers
+# instead of requiring the real toolkit include path for this CXX target.
+target_include_directories(eval_logical_ops_test PRIVATE tests/stubs)
+
+add_test(NAME eval_logical_ops_test COMMAND eval_logical_ops_test)
 add_executable(not_equal_operator_test
     tests/not_equal_operator_test.cpp
     src/expression.cpp
