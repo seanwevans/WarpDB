@@ -10,6 +10,11 @@ enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
 
+# Make the public headers available to every target. Several test executables
+# compile tests/*.cpp together with src/expression.cpp without linking
+# warpdb_lib, so without this they fail to find "expression.hpp".
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 find_package(CUDAToolkit REQUIRED)
 
 find_package(Arrow QUIET COMPONENTS cuda)
@@ -126,6 +131,12 @@ add_executable(eval_logical_ops_test
 target_include_directories(eval_logical_ops_test PRIVATE tests/stubs)
 
 add_test(NAME eval_logical_ops_test COMMAND eval_logical_ops_test)
+add_executable(not_equal_operator_test
+    tests/not_equal_operator_test.cpp
+    src/expression.cpp
+)
+
+add_test(NAME not_equal_operator_test COMMAND not_equal_operator_test)
 
 
 add_executable(sql_features_test

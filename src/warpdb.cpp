@@ -736,8 +736,6 @@ float eval_join_node(const ASTNode *node, const HostTable &table, int left_idx,
     return 0.0f;
 }
 
-} // namespace
-
 QueryPlan plan_query(QueryAST &&ast, const std::unordered_set<std::string> &cols, const Table &table) {
     validate_query_ast(ast, cols);
 
