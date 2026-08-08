@@ -489,6 +489,15 @@ HostTable load_csv_chunk(std::istream &stream, int max_rows, bool &finished,
     ++count;
   }
 
+  // The loop above stops as soon as the chunk is full (count == max_rows)
+  // without trying to read further, so it never observes end-of-input when the
+  // remaining rows exactly fill the final chunk. Honor the documented contract
+  // -- "finished is set to true when no more rows are available" -- by peeking
+  // for trailing data, so callers (and tests) don't require an extra empty read.
+  if (!finished && stream.peek() == std::char_traits<char>::eof()) {
+    finished = true;
+  }
+
   if (rows.empty()) {
     finished = finished || stream.eof();
     if (stream.fail() && !stream.eof()) {
