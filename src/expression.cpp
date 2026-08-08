@@ -127,6 +127,17 @@ std::vector<Token> tokenize(const std::string &input) {
       // Handle two-character comparison operators (>=, <=, ==, !=) first
       int start_col = column;
       int start_line = line;
+      // SQL's '<>' is the not-equal operator; normalize it to '!=' so the rest
+      // of the pipeline (parser, host evaluator, CUDA codegen) treats it
+      // uniformly.
+      if (input[i] == '<' && i + 1 < input.size() && input[i + 1] == '>') {
+        advance_char(input[i]);
+        i++;
+        advance_char(input[i]);
+        i++;
+        tokens.push_back({TokenType::Operator, "!=", start_line, start_col});
+        continue;
+      }
       std::string op(1, input[i]);
       if (i + 1 < input.size() && input[i + 1] == '=') {
         op += '=';

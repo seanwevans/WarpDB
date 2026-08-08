@@ -278,6 +278,8 @@ WarpDB implements a simple recursive descent parser to transform SQL-like expres
     handling single-character ones.
   - A single `=` is also accepted and treated as equality (equivalent to `==`),
     matching SQL syntax such as `WHERE price = 10` and `JOIN ... ON a.id = b.id`.
+  - SQL's `<>` is accepted as not-equal (equivalent to `!=`), e.g.
+    `WHERE price <> 10`.
 - Parenthesized expressions
 
 ### JIT Compilation
