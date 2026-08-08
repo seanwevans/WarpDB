@@ -20,6 +20,12 @@ find_package(CUDAToolkit REQUIRED)
 find_package(Arrow QUIET COMPONENTS cuda)
 
 include(FetchContent)
+# Do not build nlohmann/json's bundled unit tests. v3.2.0 vendors an old Catch
+# (test/thirdparty/catch/catch.hpp) that no longer compiles on modern glibc,
+# where SIGSTKSZ is not a compile-time constant ("size of array 'altStackMem'
+# is not an integral constant-expression"). We only consume the library
+# headers, so its test suite must not be part of our build.
+set(JSON_BuildTests OFF CACHE INTERNAL "")
 FetchContent_Declare(
   nlohmann_json
   GIT_REPOSITORY https://github.com/nlohmann/json.git
