@@ -275,12 +275,6 @@ add_executable(jit_sort_parallel_test
 )
 target_link_libraries(jit_sort_parallel_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
 add_test(NAME jit_sort_parallel_test COMMAND jit_sort_parallel_test)
-add_executable(jit_group_sum_test
-    tests/jit_group_sum_test.cpp
-    src/jit.cu
-)
-target_link_libraries(jit_group_sum_test PRIVATE CUDA::cudart CUDA::nvrtc CUDA::cuda_driver)
-add_test(NAME jit_group_sum_test COMMAND jit_group_sum_test)
 add_executable(jit_cache_test
     tests/jit_cache_test.cpp
     src/jit.cu

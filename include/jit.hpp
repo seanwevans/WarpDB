@@ -21,14 +21,6 @@ void reset_jit_cache();
 
 enum class GroupReduceOp { Sum, Min, Max };
 
-// JIT compile a kernel that groups rows by `key_expr_code` and sums
-// `val_expr_code`. The number of unique groups is written to d_count and
-// results are stored in d_out_vals and d_out_keys.
-void jit_group_sum(const std::string &val_expr_code,
-                   const std::string &key_expr_code, float *d_price,
-                   int *d_quantity, float *d_out_vals, int *d_out_keys,
-                   int *d_count, int N, int device_id = 0);
-
 // Reduce numeric values by integer keys on GPU. Keys must be Int32 or Int64
 // and values must be numeric. Returns number of unique groups and writes
 // grouped keys and aggregated values to output buffers.
