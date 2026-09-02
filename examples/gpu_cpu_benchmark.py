@@ -1,10 +1,25 @@
-"""Interactive benchmarking and visualization for WarpDB GPU vs CPU execution.
+"""Benchmark WarpDB's GPU expression path against a pandas CPU baseline.
 
-This script demonstrates how WarpDB's GPU-accelerated query execution compares to
-CPU-bound processing by running example SQL-like expressions against CSV/JSON
-inputs.  When CUDA hardware or the Python bindings are not available it falls
-back to curated sample metrics so the visualization still communicates the
-performance profile of the engine.
+Every number this script prints or plots is measured on the machine it runs on.
+There is no sample/demo mode: if pandas or the ``pywarpdb`` bindings are
+missing, the script fails with an explanatory error rather than substituting
+figures that were not measured.
+
+What is and is not measured:
+
+* Timings cover query execution only. The CSV is read once up front for both
+  engines (``pandas.read_csv`` for the CPU side, the ``WarpDB`` constructor for
+  the GPU side), so neither number includes ingest.
+* ``--warmup`` iterations run before timing. This matters for WarpDB: the first
+  execution of an expression pays for NVRTC compilation, and later executions
+  hit the JIT cache. Reported times are therefore warm, cache-hit times.
+* Throughput is reported as input CSV bytes divided by execution time. It is a
+  size-relative rate for comparing the two engines on the same file -- not a
+  measurement of achieved device memory bandwidth.
+* GPU utilization is not reported. Sampling it requires NVML, which this script
+  does not depend on.
+* This benchmarks ``WarpDB.query``, the JIT-compiled GPU expression path.
+  ``WarpDB.query_sql`` executes on the host and is not covered here.
 """
 
 from __future__ import annotations
@@ -12,13 +27,12 @@ from __future__ import annotations
 import argparse
 import statistics
 import sys
-import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-try:  # Pandas is required only for live benchmarking.
+try:  # Required for the CPU baseline.
     import pandas as pd
 except Exception as exc:  # pragma: no cover - optional dependency
     pd = None  # type: ignore
@@ -26,10 +40,13 @@ except Exception as exc:  # pragma: no cover - optional dependency
 else:
     _PANDAS_IMPORT_ERROR = None
 
-try:  # Optional dependency used for GPU execution.
+try:  # Required for the GPU measurements.
     import pywarpdb  # type: ignore
-except Exception:  # pragma: no cover - environment without bindings
+except Exception as exc:  # pragma: no cover - environment without bindings
     pywarpdb = None
+    _PYWARPDB_IMPORT_ERROR = exc
+else:
+    _PYWARPDB_IMPORT_ERROR = None
 
 try:
     import matplotlib.pyplot as plt
@@ -40,40 +57,29 @@ else:
     _MATPLOTLIB_IMPORT_ERROR = None
 
 
+DEFAULT_QUERIES = [
+    "price * quantity",
+    "price * quantity WHERE price > 10",
+]
+
+
 @dataclass
 class Metric:
     label: str
-    execution_ms: float
-    memory_throughput_gb_s: float
-    gpu_utilization_pct: float
+    mean_ms: float
+    stdev_ms: float
+    min_ms: float
+    throughput_gb_s: float
     gpus: int
 
     def as_dict(self) -> Dict[str, float]:
         return {
-            "execution_ms": self.execution_ms,
-            "memory_throughput_gb_s": self.memory_throughput_gb_s,
-            "gpu_utilization_pct": self.gpu_utilization_pct,
+            "mean_ms": self.mean_ms,
+            "stdev_ms": self.stdev_ms,
+            "min_ms": self.min_ms,
+            "throughput_gb_s": self.throughput_gb_s,
             "gpus": self.gpus,
         }
-
-
-SAMPLE_BENCHMARKS: Dict[str, List[Metric]] = {
-    "price * quantity": [
-        Metric("CPU", 42.7, 6.4, 0.0, 0),
-        Metric("GPU x1", 6.1, 44.5, 68.0, 1),
-        Metric("GPU x4", 2.2, 126.0, 92.0, 4),
-    ],
-    "price * quantity WHERE price > 10": [
-        Metric("CPU", 58.4, 4.9, 0.0, 0),
-        Metric("GPU x1", 9.8, 29.7, 51.0, 1),
-        Metric("GPU x4", 3.5, 83.2, 88.0, 4),
-    ],
-    "(price * 0.9) + shipping_cost": [
-        Metric("CPU", 71.2, 4.2, 0.0, 0),
-        Metric("GPU x1", 10.4, 28.6, 48.0, 1),
-        Metric("GPU x4", 3.6, 82.7, 86.0, 4),
-    ],
-}
 
 
 def parse_query_parts(query: str) -> Dict[str, str]:
@@ -93,80 +99,69 @@ def compute_dataset_size_bytes(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
-def run_cpu_expression(df: pd.DataFrame, expr: str, where: str) -> pd.Series:
-    if where:
-        filtered = df.query(where, engine="python")
-    else:
-        filtered = df
-    return filtered.eval(expr, engine="python")
+def run_cpu_expression(df: "pd.DataFrame", expr: str, where: str):
+    # Use pandas' default engine (numexpr when installed) rather than forcing
+    # engine="python". Pinning the slow path would understate the baseline and
+    # overstate WarpDB's speedup.
+    filtered = df.query(where) if where else df
+    return filtered.eval(expr)
 
 
-def measure_cpu(df: pd.DataFrame, query: str, *, repeats: int, data_size_gb: float,
-                theoretical_bandwidth: float) -> Metric:
+def _summarize(label: str, timings: List[float], data_size_gb: float,
+               gpus: int) -> Metric:
+    mean_ms = statistics.mean(timings)
+    stdev_ms = statistics.stdev(timings) if len(timings) > 1 else 0.0
+    min_ms = min(timings)
+    throughput = data_size_gb / (mean_ms / 1000.0) if mean_ms > 0 else 0.0
+    return Metric(label, mean_ms, stdev_ms, min_ms, throughput, gpus)
+
+
+def measure_cpu(df: "pd.DataFrame", query: str, *, repeats: int, warmup: int,
+                data_size_gb: float) -> Metric:
     parts = parse_query_parts(query)
+    for _ in range(warmup):
+        run_cpu_expression(df, parts["expr"], parts["where"])
     timings: List[float] = []
     for _ in range(repeats):
         start = time.perf_counter()
         run_cpu_expression(df, parts["expr"], parts["where"])
         timings.append((time.perf_counter() - start) * 1000.0)
-    execution_ms = statistics.mean(timings)
-    throughput = 0.0
-    if execution_ms > 0:
-        throughput = data_size_gb / (execution_ms / 1000.0)
-    utilization = min(100.0, (throughput / theoretical_bandwidth) * 100.0) if theoretical_bandwidth else 0.0
-    return Metric("CPU", execution_ms, throughput, utilization, gpus=0)
+    return _summarize("CPU (pandas)", timings, data_size_gb, gpus=0)
 
 
-def measure_gpu(csv_path: Path, query: str, *, repeats: int, data_size_gb: float,
-                theoretical_bandwidth: float, use_multi_gpu: bool) -> Optional[Metric]:
-    if pywarpdb is None:
-        return None
-
+def measure_gpu(db, query: str, *, repeats: int, warmup: int,
+                data_size_gb: float, use_multi_gpu: bool) -> Metric:
+    run = db.query_multi_gpu if use_multi_gpu else db.query
+    for _ in range(warmup):
+        run(query)
     timings: List[float] = []
-    db = pywarpdb.WarpDB(str(csv_path))
     for _ in range(repeats):
         start = time.perf_counter()
-        if use_multi_gpu:
-            db.query_multi_gpu(query)
-        else:
-            db.query(query)
+        run(query)
         timings.append((time.perf_counter() - start) * 1000.0)
-    execution_ms = statistics.mean(timings)
-    throughput = 0.0
-    if execution_ms > 0:
-        throughput = data_size_gb / (execution_ms / 1000.0)
-    utilization = min(100.0, (throughput / theoretical_bandwidth) * 100.0) if theoretical_bandwidth else 0.0
-    label = "GPU multi" if use_multi_gpu else "GPU x1"
     gpu_count = detect_gpu_count()
-    return Metric(label, execution_ms, throughput, utilization, gpus=gpu_count)
+    label = f"GPU x{gpu_count}" if use_multi_gpu else "GPU x1"
+    return _summarize(label, timings, data_size_gb,
+                      gpus=gpu_count if use_multi_gpu else 1)
 
 
 def detect_gpu_count() -> int:
     if pywarpdb is None:
         return 0
 
-    attr = getattr(pywarpdb, "get_device_count", None)
-    if callable(attr):
+    for name in ("get_device_count", "device_count"):
+        attr = getattr(pywarpdb, name, None)
+        if attr is None:
+            continue
         try:
-            return max(1, int(attr()))
-        except Exception:
-            return 1
-
-    attr = getattr(pywarpdb, "device_count", None)
-    if callable(attr):
-        try:
-            return max(1, int(attr()))
-        except Exception:
-            return 1
-    if attr is not None:
-        try:
-            return max(1, int(attr))
+            return max(1, int(attr() if callable(attr) else attr))
         except Exception:
             return 1
     return 1
 
 
-def make_plot(query: str, metrics: List[Metric], *, output: Path, show: bool) -> None:
+def make_plot(query: str, metrics: List[Metric], *, output: Path,
+              show: bool) -> None:
     if plt is None:  # pragma: no cover - depends on environment
         print(
             "[warning] matplotlib is unavailable; skipping plot generation for "
@@ -175,36 +170,29 @@ def make_plot(query: str, metrics: List[Metric], *, output: Path, show: bool) ->
         return
 
     labels = [m.label for m in metrics]
-    exec_values = [m.execution_ms for m in metrics]
-    throughput_values = [m.memory_throughput_gb_s for m in metrics]
-    util_values = [m.gpu_utilization_pct for m in metrics]
+    exec_values = [m.mean_ms for m in metrics]
+    errors = [m.stdev_ms for m in metrics]
+    throughput_values = [m.throughput_gb_s for m in metrics]
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-    fig.suptitle(f"WarpDB GPU vs CPU Benchmark — {query}")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(f"WarpDB measured benchmark — {query}")
 
-    bars = axes[0].bar(labels, exec_values, color=["#6c757d" if m.gpus == 0 else "#0d6efd" for m in metrics])
-    axes[0].set_ylabel("Execution time (ms)")
-    axes[0].invert_yaxis()  # shorter bars are faster
+    colors = ["#6c757d" if m.gpus == 0 else "#0d6efd" for m in metrics]
+    bars = axes[0].bar(labels, exec_values, yerr=errors, capsize=4, color=colors)
+    axes[0].set_ylabel("Execution time (ms), lower is better")
     for bar, value in zip(bars, exec_values):
-        axes[0].text(bar.get_x() + bar.get_width() / 2.0, bar.get_height(), f"{value:.1f}",
-                     ha="center", va="bottom")
+        axes[0].text(bar.get_x() + bar.get_width() / 2.0, bar.get_height(),
+                     f"{value:.2f}", ha="center", va="bottom")
 
-    bars = axes[1].bar(labels, throughput_values,
-                       color=["#6c757d" if m.gpus == 0 else "#198754" for m in metrics])
-    axes[1].set_ylabel("Memory throughput (GB/s)")
+    colors = ["#6c757d" if m.gpus == 0 else "#198754" for m in metrics]
+    bars = axes[1].bar(labels, throughput_values, color=colors)
+    axes[1].set_ylabel("Input GB/s (CSV bytes ÷ exec time)")
     for bar, value in zip(bars, throughput_values):
-        axes[1].text(bar.get_x() + bar.get_width() / 2.0, bar.get_height(), f"{value:.1f}",
-                     ha="center", va="bottom")
-
-    bars = axes[2].bar(labels, util_values,
-                       color=["#adb5bd" if m.gpus == 0 else "#fd7e14" for m in metrics])
-    axes[2].set_ylabel("GPU utilization (%)")
-    axes[2].set_ylim(0, 100)
-    for bar, value in zip(bars, util_values):
-        axes[2].text(bar.get_x() + bar.get_width() / 2.0, bar.get_height(), f"{value:.0f}",
-                     ha="center", va="bottom")
+        axes[1].text(bar.get_x() + bar.get_width() / 2.0, bar.get_height(),
+                     f"{value:.2f}", ha="center", va="bottom")
 
     for ax in axes:
+        ax.set_xticks(range(len(labels)))
         ax.set_xticklabels(labels, rotation=15, ha="right")
         ax.grid(axis="y", linestyle="--", alpha=0.3)
 
@@ -215,31 +203,35 @@ def make_plot(query: str, metrics: List[Metric], *, output: Path, show: bool) ->
     plt.close(fig)
 
 
-def gather_sample_metrics(query: str) -> List[Metric]:
-    if query not in SAMPLE_BENCHMARKS:
-        raise KeyError(
-            f"No sample metrics available for query '{query}'. Available queries:"
-            f" {', '.join(SAMPLE_BENCHMARKS)}"
-        )
-    return SAMPLE_BENCHMARKS[query]
-
-
 def format_metric_table(metrics: List[Metric]) -> str:
-    header = f"{'Configuration':<15} | {'Exec (ms)':>10} | {'Throughput (GB/s)':>18} | {'GPU Util (%)':>12}"
+    header = (f"{'Configuration':<15} | {'Mean (ms)':>10} | {'Stdev':>8} | "
+              f"{'Min (ms)':>10} | {'Input GB/s':>11}")
     rows = [header, "-" * len(header)]
     for m in metrics:
         rows.append(
-            f"{m.label:<15} | {m.execution_ms:>10.1f} | {m.memory_throughput_gb_s:>18.1f} | {m.gpu_utilization_pct:>12.1f}"
+            f"{m.label:<15} | {m.mean_ms:>10.2f} | {m.stdev_ms:>8.2f} | "
+            f"{m.min_ms:>10.2f} | {m.throughput_gb_s:>11.2f}"
         )
     return "\n".join(rows)
 
 
-def run_live_benchmark(args: argparse.Namespace) -> None:
+def require_dependencies(need_gpu: bool) -> None:
     if pd is None:
         raise RuntimeError(
-            "pandas is required for live benchmarking but could not be imported:"
-            f" {_PANDAS_IMPORT_ERROR}"
+            "pandas is required for the CPU baseline but could not be imported: "
+            f"{_PANDAS_IMPORT_ERROR}"
         )
+    if need_gpu and pywarpdb is None:
+        raise RuntimeError(
+            "pywarpdb is required for GPU measurements but could not be "
+            f"imported: {_PYWARPDB_IMPORT_ERROR}. Build the bindings with "
+            "-DWARPDB_BUILD_PYTHON=ON, or pass --cpu-only to record just the "
+            "pandas baseline."
+        )
+
+
+def run_benchmark(args: argparse.Namespace) -> None:
+    require_dependencies(need_gpu=not args.cpu_only)
 
     csv_path = Path(args.dataset)
     if not csv_path.exists():
@@ -247,45 +239,40 @@ def run_live_benchmark(args: argparse.Namespace) -> None:
 
     df = pd.read_csv(csv_path)
     data_size_gb = compute_dataset_size_bytes(csv_path) / (1024 ** 3)
+    if len(df) < args.min_rows:
+        print(
+            f"[warning] '{csv_path}' has {len(df)} rows. Timings below "
+            f"{args.min_rows} rows are dominated by fixed per-call overhead "
+            "(kernel launch, PCIe transfer, Python dispatch) and say nothing "
+            "about throughput. Use a larger dataset for a meaningful result.",
+            file=sys.stderr,
+        )
+
+    db = None if args.cpu_only else pywarpdb.WarpDB(str(csv_path))
 
     for query in args.queries:
-        metrics: List[Metric] = []
-        metrics.append(
-            measure_cpu(
-                df,
-                query,
-                repeats=args.repeats,
-                data_size_gb=data_size_gb,
-                theoretical_bandwidth=args.theoretical_cpu_bandwidth,
+        metrics: List[Metric] = [
+            measure_cpu(df, query, repeats=args.repeats, warmup=args.warmup,
+                        data_size_gb=data_size_gb)
+        ]
+
+        if db is not None:
+            metrics.append(
+                measure_gpu(db, query, repeats=args.repeats,
+                            warmup=args.warmup, data_size_gb=data_size_gb,
+                            use_multi_gpu=False)
             )
-        )
-        if pywarpdb is not None:
-            gpu_metric = measure_gpu(
-                csv_path,
-                query,
-                repeats=args.repeats,
-                data_size_gb=data_size_gb,
-                theoretical_bandwidth=args.theoretical_gpu_bandwidth,
-                use_multi_gpu=False,
-            )
-            if gpu_metric is not None:
-                metrics.append(gpu_metric)
             if args.enable_multi_gpu:
-                multi = measure_gpu(
-                    csv_path,
-                    query,
-                    repeats=args.repeats,
-                    data_size_gb=data_size_gb,
-                    theoretical_bandwidth=args.theoretical_gpu_bandwidth,
-                    use_multi_gpu=True,
-                )
-                if multi is not None and multi.gpus > 1:
-                    multi.label = f"GPU x{multi.gpus}"
+                multi = measure_gpu(db, query, repeats=args.repeats,
+                                    warmup=args.warmup,
+                                    data_size_gb=data_size_gb,
+                                    use_multi_gpu=True)
+                if multi.gpus > 1:
                     metrics.append(multi)
-        else:
-            print(
-                "[warning] pywarpdb bindings are unavailable. Only CPU metrics will be collected."
-            )
+                else:
+                    print("[warning] --enable-multi-gpu requested but only one "
+                          "device was detected; skipping the multi-GPU run.",
+                          file=sys.stderr)
 
         output = Path(args.output_dir) / f"{sanitize_filename(query)}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -299,51 +286,46 @@ def sanitize_filename(name: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in name)[:80]
 
 
-def run_sample_mode(args: argparse.Namespace) -> None:
-    for query in args.queries:
-        metrics = gather_sample_metrics(query)
-        output = Path(args.output_dir) / f"sample_{sanitize_filename(query)}.png"
-        output.parent.mkdir(parents=True, exist_ok=True)
-        make_plot(query, metrics, output=output, show=args.show)
-        print(f"Generated sample visualization for '{query}' at {output}")
-        print(format_metric_table(metrics))
-        print(
-            textwrap.fill(
-                "These figures use curated benchmark data to illustrate how WarpDB scales from"
-                " CPU execution to single- and multi-GPU runs. Use `--mode live` to run the"
-                " benchmark on your own hardware.",
-                width=100,
-            )
-        )
-        print()
-
-
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Visualize GPU-accelerated WarpDB query performance versus CPU execution."
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["sample", "live"],
-        default="sample",
-        help="Use curated sample metrics or execute live benchmarks (requires CUDA + pywarpdb).",
+        description="Measure WarpDB GPU query performance against a pandas "
+                    "CPU baseline. All reported figures are measured locally.",
     )
     parser.add_argument(
         "--dataset",
         default="data/test.csv",
-        help="Path to the CSV dataset for live benchmarking.",
+        help="Path to the CSV dataset to benchmark.",
     )
     parser.add_argument(
         "--queries",
         nargs="+",
-        default=list(SAMPLE_BENCHMARKS.keys()),
-        help="Queries to evaluate.",
+        default=list(DEFAULT_QUERIES),
+        help="Expressions to evaluate (WarpDB expression syntax).",
     )
     parser.add_argument(
         "--repeats",
         type=int,
         default=5,
-        help="Number of timing repetitions for each configuration.",
+        help="Number of timed repetitions for each configuration.",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=2,
+        help="Untimed warmup iterations run before timing. Needed so WarpDB "
+             "measurements reflect JIT cache hits rather than NVRTC compiles.",
+    )
+    parser.add_argument(
+        "--min-rows",
+        type=int,
+        default=100_000,
+        help="Warn when the dataset has fewer rows than this, because the "
+             "measurement would be dominated by fixed overhead.",
+    )
+    parser.add_argument(
+        "--cpu-only",
+        action="store_true",
+        help="Record only the pandas baseline; do not require pywarpdb.",
     )
     parser.add_argument(
         "--output-dir",
@@ -358,29 +340,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--enable-multi-gpu",
         action="store_true",
-        help="Attempt to run multi-GPU benchmarks when hardware is available.",
-    )
-    parser.add_argument(
-        "--theoretical-gpu-bandwidth",
-        type=float,
-        default=900.0,
-        help="Theoretical GPU memory bandwidth (GB/s) for utilization estimates.",
-    )
-    parser.add_argument(
-        "--theoretical-cpu-bandwidth",
-        type=float,
-        default=100.0,
-        help="Approximate CPU memory bandwidth (GB/s) for utilization estimates.",
+        help="Also time WarpDB.query_multi_gpu when multiple devices exist.",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
-    if args.mode == "live":
-        run_live_benchmark(args)
-    else:
-        run_sample_mode(args)
+    run_benchmark(args)
     return 0
 
 
