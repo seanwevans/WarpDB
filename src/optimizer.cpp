@@ -1,9 +1,6 @@
 #include "optimizer.hpp"
-#include "jit.hpp"
 #include <cuda_runtime.h>
 #include "cuda_utils.hpp"
-#include <iostream>
-#include <memory>
 #include <vector>
 #include <limits>
 #include <algorithm>
@@ -288,50 +285,6 @@ void analyze_condition(const ASTNode *node, const TableStats &stats,
             }
         }
     }
-}
-
-void execute_query_optimized(const std::vector<Token> &expr_tokens,
-                             const std::vector<Token> &where_tokens, Table &table) {
-    auto expr_ast = parse_expression(expr_tokens);
-
-    std::unique_ptr<ASTNode> cond_ast;
-    if (!where_tokens.empty()) {
-        cond_ast = parse_expression(where_tokens);
-    }
-
-    bool always_true = false;
-    bool always_false = false;
-    TableStats stats;
-    bool have_stats = compute_table_stats(table, stats);
-
-    if (cond_ast && have_stats) {
-        analyze_condition(cond_ast.get(), stats, always_true, always_false);
-    }
-
-    if (always_false) {
-        std::cout << "[Optimizer] Filter eliminates all rows.\n";
-        return;
-    }
-
-    std::string expr_cuda = expr_ast->to_cuda_expr();
-    std::string cond_cuda;
-    if (cond_ast && !always_true) {
-        cond_cuda = cond_ast->to_cuda_expr();
-    }
-
-    DeviceBuffer<float> d_output(table.num_rows);
-    // Pass 0 for block_size so jit_compile_and_launch selects an occupancy
-    // optimised configuration.
-    jit_compile_and_launch(expr_cuda, cond_cuda, table, d_output.get(), 0, 0);
-
-    std::vector<float> h_out(table.num_rows);
-    CUDA_CHECK(cudaMemcpy(h_out.data(), d_output.get(),
-                          sizeof(float) * table.num_rows,
-                          cudaMemcpyDeviceToHost));
-    for (int i = 0; i < table.num_rows; ++i) {
-        std::cout << "Result[" << i << "] = " << h_out[i] << "\n";
-    }
-
 }
 
 std::vector<JoinPredicate> extract_equi_join_predicates(const QueryAST &ast) {

@@ -7,8 +7,12 @@
 #include "csv_loader.hpp"
 #include "expression.hpp"
 
-void execute_query_optimized(const std::vector<Token> &expr_tokens,
-                             const std::vector<Token> &where_tokens, Table &table);
+// NOTE: nothing in this header is currently invoked by query execution.
+// WarpDB::query() launches its JIT kernel without consulting table statistics,
+// and WarpDB::query_sql() interprets the query on the host without consulting
+// the join planner. These routines are analysis primitives with test coverage,
+// kept for the point at which planning is wired into a query path; they do not
+// affect the result or the cost of any query you can run today.
 
 // Populate table statistics by copying numeric columns from device to host
 // memory. Returns true when statistics for at least one numeric column were
