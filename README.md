@@ -262,28 +262,37 @@ CSV file in chunks, enabling processing of datasets larger than a single GPU's
 memory. Results are aggregated back on the host.
 
 
-### Benchmark Visualization
+### Benchmarking
 
-To illustrate the benefit of GPU acceleration WarpDB ships with a helper script
-that benchmarks CPU and GPU execution paths and plots execution time, memory
-throughput, and GPU utilization (with multi-GPU scaling where available).
-
-```bash
-python examples/gpu_cpu_benchmark.py --mode sample
-```
-
-The sample mode uses curated metrics to showcase how JIT-compiled CUDA kernels
-outpace CPU execution even when multiple GPUs are involved. To execute live
-benchmarks on your hardware, install the optional Python bindings and run:
+`examples/gpu_cpu_benchmark.py` times WarpDB's JIT-compiled GPU expression path
+against a pandas CPU baseline on your own hardware and plots the comparison.
 
 ```bash
-python examples/gpu_cpu_benchmark.py --mode live --dataset data/test.csv \
-       --enable-multi-gpu --output-dir visualizations/live
+python examples/gpu_cpu_benchmark.py --dataset /path/to/large.csv \
+       --enable-multi-gpu --output-dir visualizations
 ```
 
-The live mode times Pandas-based CPU evaluation versus WarpDB's GPU kernels,
-computes approximate memory throughput, and generates comparison plots for each
-query in the specified output directory.
+Requires pandas and the `pywarpdb` bindings; pass `--cpu-only` to record just
+the pandas baseline. Every figure it prints or plots is measured locally — the
+script has no sample or demo mode and will fail rather than report numbers it
+did not measure.
+
+**This project publishes no performance claims.** No benchmark results are
+checked into the repository, and none of the documentation asserts a speedup.
+If you want to know whether WarpDB is faster than the alternatives on your
+workload, run the script and find out. Note in particular:
+
+- Timings exclude ingest for both engines, and exclude NVRTC compilation for
+  WarpDB (the script warms the JIT cache first). Cold-start cost is real and is
+  not what these numbers show.
+- Throughput is reported as input CSV bytes ÷ execution time. That is a
+  size-relative rate for comparing two engines on one file, not achieved device
+  memory bandwidth.
+- On small inputs the result is dominated by fixed per-call overhead — kernel
+  launch, PCIe transfer, Python dispatch. The 5-row CSVs in `data/` exist to
+  test correctness, not performance. The script warns below 100k rows.
+- Only `query()` is benchmarked. It is the JIT-compiled GPU path. `query_sql()`
+  is a separate, host-side implementation and is not covered here.
 
 
 ## Execution model
