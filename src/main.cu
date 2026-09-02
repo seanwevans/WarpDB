@@ -77,29 +77,6 @@ void run_multi_gpu_jit_large(const std::string &csv_path,
 
 
 
-__global__ void print_first_few(float *price, int *quantity, int N) {
-  int idx = threadIdx.x;
-  if (idx < N && idx < 4) {
-    printf("Row %d: price = %.2f, quantity = %d\n", idx, price[idx],
-           quantity[idx]);
-  }
-}
-
-__global__ void project_columns(float *price, int *quantity, float *out_price,
-                                int *out_quantity, int *out_count, int N,
-                                bool select_price, bool select_quantity) {
-  int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (idx >= N)
-    return;
-
-  int write_idx = atomicAdd(out_count, 1);
-  if (select_price)
-    out_price[write_idx] = price[idx];
-  if (select_quantity)
-    out_quantity[write_idx] = quantity[idx];
-}
-
-
 // Print query results, supporting multiple SELECT columns of arbitrary type.
 static void print_query_results(const QueryResult &results) {
   const size_t rows = results.size();
