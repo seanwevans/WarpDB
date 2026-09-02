@@ -1,24 +1,39 @@
 # WarpDB
 <img width="256" alt="Magnifying Glass on Orange Gradient" src="https://github.com/user-attachments/assets/abd703f5-17be-4537-b097-35c081e223e5" />
 
-WarpDB is a GPU-accelerated SQL query engine that demonstrates how to leverage CUDA for high-performance database operations. It uses JIT (Just-In-Time) compilation to dynamically generate CUDA kernels based on user queries, providing fast data processing capabilities for analytical workloads.
+WarpDB is an educational query engine that JIT-compiles SQL-like expressions
+into CUDA kernels at runtime with NVRTC and runs them over columnar data held in
+GPU memory.
+
+It is a demonstration of the technique, not a database. There is no storage
+engine, no catalog, no transactions and no persistence — a WarpDB instance loads
+one file and answers queries about it. Two execution paths exist and only one of
+them uses the GPU; see [Execution model](#execution-model) for exactly which
+query shapes are accelerated. The project publishes no performance claims and
+has not been benchmarked against alternatives such as DuckDB, cuDF or
+HeavyDB.
 
 ## Features
 
-- **GPU-Accelerated Query Processing**: Execute SQL-like queries directly on GPU memory for maximum performance
+- **GPU Expression Execution**: `query()` evaluates an expression with an optional `WHERE` clause as a JIT-compiled CUDA kernel over columns resident in GPU memory
 - **Dynamic CUDA Kernel Compilation**: JIT-compile custom CUDA kernels at runtime based on user expressions
 - **Expression Parsing & Code Generation**: Parse SQL-like expressions and automatically generate optimized CUDA code
 - **CSV Data Loading**: Efficiently load data from CSV files directly to GPU memory
 - **JSON Data Loading**: Read newline-delimited JSON files
 - **Parquet/Arrow/ORC Loading (Optional)**: Use Apache Arrow (when available at build time) to ingest columnar formats
-- **CUDA-Based Data Filtering & Projection**: Filter and transform data in parallel on the GPU
+- **CUDA-Based Filtering & Projection**: The `query()` path filters and transforms in parallel on the GPU
 - **Arrow Columnar Format**: Optionally load data using Apache Arrow for zero-copy
   interoperability with Pandas, PyTorch, and Spark
 - **Arrow Results**: Retrieve query results as Arrow buffers for easy sharing
   (optionally using a custom shared memory name)
 - **User-Provided CUDA Functions**: Extend queries with functions defined in `custom.cu`
-- **Column Statistics & Optimizer**: Collect min/max/null counts for basic filter pushdown and kernel fusion
-- **Multi-GPU Execution**: Robust support for running queries across multiple GPUs, including streaming large CSV files
+- **Column Statistics (analysis only)**: Collect min/max/null counts and detect
+  constant-folding opportunities in filter predicates. These routines are not
+  currently invoked by either execution path — see [Execution model](#execution-model)
+- **Multi-GPU Execution (sequential)**: Shard an expression's rows across every
+  visible device, and stream CSV files larger than one device's memory. Devices
+  are driven one at a time rather than concurrently, so this extends capacity,
+  not throughput — see [Execution model](#execution-model)
 
 ## Architecture
 
@@ -50,12 +65,16 @@ WarpDB consists of the following main components:
 - Supports basic arithmetic operations, comparisons, and column references
 
 ### CUDA JIT Compiler
-- Compiles SQL expressions into optimized CUDA kernels at runtime using NVRTC
-- Dynamically generates and optimizes code based on the query structure
+- Compiles expressions into CUDA kernels at runtime using NVRTC, caching
+  compiled modules so a repeated expression is compiled once
+- Optimization is whatever NVRTC applies; WarpDB does not rewrite the query
 
 ### Query Execution Engine
-- Executes the compiled kernels on the GPU
+- Launches compiled kernels on the GPU for the `query()` path, choosing a block
+  size by occupancy
 - Manages memory allocation and data transfer between host and device
+- The `query_sql()` path does not use this engine; it interprets the query on
+  the host (see [Execution model](#execution-model))
 
 ## Requirements
 
@@ -267,15 +286,66 @@ computes approximate memory throughput, and generates comparison plots for each
 query in the specified output directory.
 
 
+## Execution model
+
+WarpDB has two independent execution paths that do not share an implementation.
+Which one runs depends on the entry point you call.
+
+| Entry point | Where it runs | What it accepts |
+|---|---|---|
+| `query(expr)` | **GPU.** Parsed to an AST, emitted as CUDA, compiled with NVRTC, launched as one kernel per query. | A single expression plus an optional `WHERE` clause |
+| `query_multi_gpu(expr)` | **GPU**, one device at a time | Same as `query()` |
+| `query_sql(sql)` | **Host**, with one narrow GPU exception (below) | `SELECT` / `WHERE` / `GROUP BY` / `HAVING` / `ORDER BY` / `DISTINCT` / `LIMIT` / `OFFSET` / single inner equi-`JOIN` |
+
+`query_sql()` — the path that accepts actual SQL — is implemented as a
+row-at-a-time AST interpreter over host memory (`filter_rows`, `eval_node`,
+`execute_group_by` and the hash join in `src/warpdb.cpp`). Rows are visited in a
+loop and each AST node is dispatched with `dynamic_cast`. Nothing about this
+path is GPU-accelerated or vectorized, and it should be assumed slower than an
+established CPU engine, not faster.
+
+The one exception is a GROUP BY fast path (`can_use_gpu_group_fast_path`,
+`src/warpdb.cpp`) that reduces on the device. It applies only when **all** of
+the following hold:
+
+- exactly one `GROUP BY` key, and it is an `Int32` or `Int64` column
+- exactly one `SELECT` expression, and it is an aggregate over a plain numeric column
+- the aggregate is not `COUNT`
+- no `WHERE`, no `HAVING`, no `JOIN`
+
+Any query that misses one of these conditions falls back to the host
+interpreter.
+
+### Multi-GPU
+
+`run_multi_gpu_jit_host` splits rows evenly across visible devices, then loops
+over them: set device, upload the shard, launch, synchronize, copy back, next
+device. Because each iteration synchronizes before the next begins, the devices
+never work concurrently. The value of this path is that a dataset larger than
+one device's memory can be processed at all; it is not a throughput
+optimization, and it has not been measured to be faster than the single-device
+path.
+
+### Optimizer
+
+`src/optimizer.cpp` provides column statistics, predicate analysis
+(always-true / always-false detection) and greedy join-order planning. None of
+it is called by `query()` or `query_sql()` — the routines are exercised only by
+`tests/optimizer_test.cpp`. No filter pushdown, join reordering or kernel fusion
+is applied to any query you can currently run.
+
 ## How It Works
+
+This describes the `query()` path. For `query_sql()`, steps 4-6 are replaced by
+host-side interpretation — see [Execution model](#execution-model).
 
 1. **CSV Loading**: Input data is loaded from CSV files directly into GPU memory.
 2. **Columnar Loading**: Parquet, Arrow, and ORC files are read via Apache Arrow and moved to GPU memory.
 3. **Query Parsing**: User queries are tokenized and parsed into an AST.
 4. **Code Generation**: The AST is converted into CUDA code.
-5. **JIT Compilation**: The generated code is compiled into a CUDA kernel using NVRTC.
+5. **JIT Compilation**: The generated code is compiled into a CUDA kernel using NVRTC (cached per expression).
 6. **Execution**: The compiled kernel is executed on the GPU.
-7. **Result Retrieval**: Results are copied back to host memory and displayed.
+7. **Result Retrieval**: Results are copied back to host memory as `float32` and displayed.
 
 ## Technical Details
 
@@ -329,7 +399,8 @@ should remain where explicitly added for debugging.
 The project has recently gained several improvements:
 
 - Optional Apache Arrow integration can be enabled with `USE_ARROW`.
-- Basic query optimization uses column statistics for simple filter pushdown.
+- Column statistics and predicate analysis exist as standalone routines (not
+  yet wired into query execution).
 - RAII wrappers manage CUDA contexts and modules to avoid resource leaks.
 - Helper functions demonstrate streaming across multiple GPUs.
 - Python bindings are built when `pybind11` is installed and
@@ -337,21 +408,66 @@ The project has recently gained several improvements:
 
 ## Limitations
 
-- Currently supports a limited subset of SQL functionality
+These are load-bearing. Read them before assuming WarpDB fits a use case.
+
+**Execution**
+
+- `query_sql()` runs on the host as a row-at-a-time interpreter. Only `query()`
+  and one narrow GROUP BY shape use the GPU — see
+  [Execution model](#execution-model)
+- Multi-GPU execution is sequential, so it adds capacity, not throughput
+- The optimizer is not connected to query execution
+
+**Types and correctness**
+
+- Results are `float32`. Every literal is emitted as a float and aggregates
+  accumulate into float, so integer and fixed-point values lose exactness beyond
+  24 bits of mantissa. There is no `DECIMAL` type — WarpDB is not suitable for
+  monetary or exact-arithmetic workloads
+- There is no `NULL` type and no three-valued logic. Null counts are gathered at
+  load time and then discarded; nulls do not propagate through expressions or
+  affect aggregates
+- No date, time, or timestamp types
+- String columns can be loaded and compared for equality, but there is no
+  general string function support
+
+**SQL surface**
+
+- No subqueries, CTEs, `UNION`, `CASE`, `IN`, `LIKE`, `BETWEEN`, or `CAST`
+- Window functions parse into an AST node but are never executed
+- `GROUP BY` supports one grouping key and one `SELECT` expression
+- `JOIN` is limited to a single inner equi-join, is not supported together with
+  `GROUP BY`, and is not supported with `SELECT *`
+- Limited error handling for malformed queries
+
+**Not a database**
+
+- No persistence, storage engine, catalog, indexes, transactions, or
+  concurrency control. One instance loads one file and answers queries about it
+- No `INSERT` / `UPDATE` / `DELETE` / `CREATE TABLE`
+
+**Build**
+
 - CSV and JSON paths are the most mature; JSON loading reads newline-delimited
   objects and infers each column's type, with an optional user-supplied schema
   map for deterministic typing
-- SQL support includes filtering, aggregations, ordering, LIMIT/OFFSET, HAVING,
-  and a host-side single-inner-equi JOIN path
-- GROUP BY execution supports only one SELECT expression and one grouping key
-- Limited error handling for malformed queries
 - Loading Parquet/Arrow/ORC files requires Apache Arrow
-- Building the Python module requires `pybind11` or disable it with
+- Building the Python module requires `pybind11`, or disable it with
   `-DWARPDB_BUILD_PYTHON=OFF`
 
 ## Future Improvements
 
-- Continue extending SQL support beyond JOIN/GROUP BY/ORDER BY, LIMIT, HAVING, and OFFSET
+Roughly in order of how much they would change what WarpDB is:
+
+- Execute the `query_sql()` path on the GPU instead of interpreting it on the
+  host, so the SQL surface and the acceleration stop being disjoint
+- Carry column types through execution rather than collapsing results to
+  `float32`
+- Represent and propagate `NULL`
+- Wire the existing statistics and predicate analysis into query planning
+- Overlap multi-GPU work across devices instead of driving them serially
+- Establish a benchmark against an established engine on a real dataset, so
+  performance can be discussed with evidence
 - Better error handling and query validation
 - Additional data source support (e.g. Avro)
 
